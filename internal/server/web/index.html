@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OCeanic RMM</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="login" class="login hidden">
+  <form id="login-form" class="login-card">
+    <div class="brand big"><img src="favicon.svg" alt=""> OCeanic <span>RMM</span></div>
+    <label>Username<input name="username" autocomplete="username" required value="admin"></label>
+    <label>Password<input name="password" type="password" autocomplete="current-password" required autofocus></label>
+    <button class="btn primary" type="submit">Sign in</button>
+    <p class="error" id="login-error"></p>
+  </form>
+</div>
+
+<div id="app" class="app hidden">
+  <aside class="sidebar">
+    <div class="brand"><img src="favicon.svg" alt=""> OCeanic <span>RMM</span></div>
+    <nav>
+      <a href="#/dashboard" data-nav="dashboard">Dashboard</a>
+      <a href="#/devices" data-nav="devices">Devices</a>
+      <a href="#/scripts" data-nav="scripts">Automation</a>
+      <a href="#/activity" data-nav="activity">Activity</a>
+      <a href="#/deploy" data-nav="deploy">Deploy agents</a>
+      <a href="#/settings" data-nav="settings">Settings</a>
+    </nav>
+    <div class="sidebar-foot">
+      <span id="whoami"></span>
+      <button class="btn link" data-action="logout">Sign out</button>
+    </div>
+  </aside>
+  <main id="view" class="view"></main>
+</div>
+
+<div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-card">
+    <div class="modal-head"><h3 id="modal-title"></h3><button class="btn link" data-action="close-modal" aria-label="Close">✕</button></div>
+    <div id="modal-body" class="modal-body"></div>
+  </div>
+</div>
+<div id="toast" class="toast hidden"></div>
+<script src="app.js"></script>
+</body>
+</html>
