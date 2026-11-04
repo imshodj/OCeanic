@@ -276,8 +276,9 @@ async function pageDevice(id, tab) {
           <dt>CPU now</dt><dd>${d.online ? bar(m.cpu_pct) : "—"}</dd>
           <dt>Memory now</dt><dd>${d.online ? bar(m.mem_pct) : "—"}</dd>
         </dl></div>
-        <div class="card flush"><h2>Disks</h2><div class="table-wrap"><table><thead><tr><th>Volume</th><th>FS</th><th>Used</th><th>Size</th><th style="width:35%">Usage</th></tr></thead><tbody>
-          ${(m.disks || si.disks || []).map(x => `<tr><td class="mono">${esc(x.mount)}</td><td>${esc(x.fstype)}</td><td class="num">${fmtBytes(x.used)}</td><td class="num">${fmtBytes(x.total)}</td><td>${bar(x.pct)}</td></tr>`).join("") || `<tr><td colspan="5" class="empty">No data</td></tr>`}
+        <div class="card flush"><h2>Disks</h2><div class="table-wrap"><table><thead><tr><th>Volume</th><th style="width:58%">Usage</th></tr></thead><tbody>
+          ${(m.disks || si.disks || []).map(x => `<tr><td><span class="mono">${esc(x.mount)}</span><div class="muted small">${esc(x.fstype)}</div></td>
+            <td>${bar(x.pct)}<div class="muted small num">${fmtBytes(x.used)} of ${fmtBytes(x.total)}</div></td></tr>`).join("") || `<tr><td colspan="2" class="empty">No data</td></tr>`}
         </tbody></table></div></div>
         <div class="card flush"><h2>Network</h2><div class="table-wrap"><table><thead><tr><th>Interface</th><th>MAC</th><th>Addresses</th></tr></thead><tbody>
           ${(si.nics || []).map(n => `<tr><td>${esc(n.name)}</td><td class="mono small">${esc(n.mac)}</td><td class="mono small">${(n.addrs || []).map(esc).join("<br>")}</td></tr>`).join("") || `<tr><td colspan="3" class="empty">No data</td></tr>`}

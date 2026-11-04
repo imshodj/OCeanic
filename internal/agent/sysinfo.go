@@ -45,6 +45,9 @@ func collectDisks() []protocol.Disk {
 		if skipFS[p.Fstype] || seen[p.Mountpoint] {
 			continue
 		}
+		if ignoredMount(p.Mountpoint) {
+			continue
+		}
 		// macOS: "/" is the sealed system volume and user data lives on
 		// /System/Volumes/Data; the other system volumes are noise.
 		if runtime.GOOS == "darwin" && ((strings.HasPrefix(p.Mountpoint, "/System/Volumes/") && p.Mountpoint != "/System/Volumes/Data") ||
@@ -63,6 +66,18 @@ func collectDisks() []protocol.Disk {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Mount < out[j].Mount })
 	return out
+}
+
+// ignoredMount honours OCEANIC_IGNORE_MOUNTS, a comma-separated list of
+// mount-point prefixes to leave out of monitoring and disk alerts
+// (e.g. "/mnt/snapshots,/var/lib/docker").
+func ignoredMount(m string) bool {
+	for _, p := range strings.Split(os.Getenv("OCEANIC_IGNORE_MOUNTS"), ",") {
+		if p = strings.TrimSpace(p); p != "" && (m == p || strings.HasPrefix(m, strings.TrimRight(p, "/")+"/")) {
+			return true
+		}
+	}
+	return false
 }
 
 func round1(f float64) float64 { return float64(int(f*10+0.5)) / 10 }

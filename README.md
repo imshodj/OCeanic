@@ -7,6 +7,18 @@ A self-hosted remote monitoring and management (RMM) tool for homelabs, similar 
 - **macOS agents.** Intel and Apple Silicon, installed with a one-liner as a launchd service, including remote desktop.
 - **Linux agents too.** Builds for x64, ARM64 and ARMv7 (Raspberry Pi), installed as a systemd service.
 
+![OCeanic remote desktop in the browser](docs/screenshots/remote-desktop.png)
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Dashboard](docs/screenshots/dashboard.png) **Dashboard:** fleet health, alerts, and recent activity | ![Devices](docs/screenshots/devices.png) **Devices:** live CPU, memory, and disk across every machine |
+| ![Device overview](docs/screenshots/device-overview.png) **Device overview:** system, hardware, disks, and network | ![Terminal](docs/screenshots/terminal.png) **Terminal:** interactive PowerShell, cmd, bash, or zsh in the browser |
+| ![Performance](docs/screenshots/performance.png) **Performance:** CPU, memory, and disk history | ![Job output](docs/screenshots/job-output.png) **Script results:** output and exit code for every job |
+| ![Automation](docs/screenshots/automation.png) **Automation library:** built-in Windows, Linux, and macOS scripts | ![Deploy](docs/screenshots/deploy.png) **Deploy:** per-organization installers and one-liners |
+| ![Dark mode](docs/screenshots/dashboard-dark.png) **Dark mode:** follows your system setting | ![Mobile](docs/screenshots/mobile.png) **Mobile:** works on a phone, too |
+
 ## Features
 
 | | |
@@ -137,6 +149,12 @@ Data, a single SQLite file, lives in the `oceanic-data` volume at `/data/oceanic
 - **Remote terminal:** opening the Terminal tab queues a `terminal` job. The agent receives it through its long-poll and dials *back* to the server over a WebSocket. The server then relays frames between the two WebSockets. Both connections are outbound from their own networks, and Cloudflare Tunnels carry WebSockets natively, so this still needs no open ports. Shells run as SYSTEM or root. On Windows, this requires Windows 10 1809 / Server 2019 or newer (ConPTY). Closing the tab kills the shell and everything it started. Shift+Esc leaves full-screen mode.
 - **Remote desktop:** the agent service runs in session 0, which has no screen. On Windows it launches a helper (`oceanic-agent.exe desktop-helper`) into the active console session, or the active RDP session if the console is empty. The helper runs as SYSTEM so it can capture the Winlogon/UAC secure desktop. It captures with GDI, injects input with `SendInput` using hardware scancodes (so it works with any keyboard layout), and dials the server over a WebSocket, the same way the terminal does. The service handles Ctrl+Alt+Del through `SendSAS`. It enables the `SoftwareSASGeneration` policy for services if that policy is off. On Linux the helper attaches to the running X11 display. It finds `DISPLAY`/`XAUTHORITY` from the session's processes, or you can set `OCEANIC_DISPLAY`/`OCEANIC_XAUTHORITY` in the agent's environment. Wayland sessions aren't supported. On macOS the agent is a root launchd daemon, which can't reach the screen. It starts the helper inside the logged-in user's GUI session with `launchctl asuser` and talks to it over stdin/stdout, so the helper never handles the agent's credentials. The helper uses CoreGraphics, loaded at runtime through [purego](https://github.com/ebitengine/purego), so the Mac build still cross-compiles from Linux with no cgo or Mac toolchain. The Mac binaries are never given an appended config trailer, which would interfere with their code signature. `macos.sh` passes `--server`/`--token` instead. The screen is split into 64×64 blocks, and only changed strips are JPEG-encoded, in parallel. The browser acknowledges each frame, so at most 2 frames are ever in flight and a slow link lowers the frame rate instead of building up lag. The user at the machine is **not** notified that someone is viewing, so only use this on machines you own or administer.
 - **Self-update:** the **Update agent** action downloads the server's current agent build. The running binary is swapped out, and the service restarts on the new version.
+
+### Agent settings
+
+To hide mount points from disk monitoring and disk alerts, such as backup snapshots, Docker volumes or read-only images, set `OCEANIC_IGNORE_MOUNTS` in the agent's environment. It takes a comma-separated list of prefixes, for example `/mnt/snapshots,/var/lib/docker`.
+- **Linux:** add `Environment=OCEANIC_IGNORE_MOUNTS=...` to `/etc/systemd/system/oceanic-agent.service`.
+- **Windows:** add a `REG_MULTI_SZ` value named `Environment` under `HKLM\SYSTEM\CurrentControlSet\Services\OCeanicAgent`.
 
 ### Agent CLI
 
