@@ -44,17 +44,44 @@ A self-hosted remote monitoring and management (RMM) tool for homelabs, similar 
    - Subdomain/domain: `rmm.example.com`
    - Service: **HTTP** → `oceanic:8080`
 
-### 2. Configure and start the stack
+### 2. Start OCeanic
+
+The image is published to GitHub Container Registry for x86-64 and ARM64 (Raspberry Pi 4/5, ARM NAS boxes), so there's nothing to build. Pick whichever option suits your setup.
+
+**Option A: one-line setup.** This asks for your tunnel token and hostname, generates an admin password, and starts everything:
 
 ```bash
-git clone https://github.com/imshodj/oceanic.git && cd oceanic
-cp .env.example .env
-# edit .env: CLOUDFLARE_TUNNEL_TOKEN, OCEANIC_PUBLIC_URL=https://rmm.example.com, OCEANIC_ADMIN_PASSWORD
-docker compose up -d --build
-docker compose logs -f oceanic        # shows a generated password if you left it blank
+curl -fsSL https://raw.githubusercontent.com/imshodj/OCeanic/main/install.sh | sh
 ```
 
-Open `https://rmm.example.com` and sign in.
+**Option B: Docker Compose by hand.**
+
+```bash
+mkdir oceanic && cd oceanic
+curl -fsSLO https://raw.githubusercontent.com/imshodj/OCeanic/main/docker-compose.yml
+curl -fsSL  https://raw.githubusercontent.com/imshodj/OCeanic/main/.env.example -o .env
+nano .env        # set CLOUDFLARE_TUNNEL_TOKEN, OCEANIC_PUBLIC_URL, OCEANIC_ADMIN_PASSWORD
+docker compose up -d
+```
+
+**Option C: Portainer, Dockge, Unraid or Synology.** Create a new stack. Paste in [`docker-compose.yml`](docker-compose.yml). Add the variables from [`.env.example`](.env.example) as stack environment variables, then deploy.
+
+**Option D: a plain `docker run`.** Use this if you run `cloudflared` separately and it can reach port 8080:
+
+```bash
+docker run -d --name oceanic --restart unless-stopped -p 127.0.0.1:8080:8080 \
+  -v oceanic-data:/data \
+  -e OCEANIC_PUBLIC_URL=https://rmm.example.com -e OCEANIC_ADMIN_PASSWORD='change-me-please' \
+  ghcr.io/imshodj/oceanic:latest
+```
+
+Open `https://rmm.example.com` and sign in as `admin`. If you didn't set a password, run `docker compose logs oceanic` to see the one that was generated.
+
+**Updating:** run `docker compose pull && docker compose up -d`. To stay on a specific release, set `OCEANIC_VERSION=1.0.0` in `.env`. After updating the server, select your devices and click **Update agent** so the agents get the new build too.
+
+**Building it yourself:** after `git clone`, run `docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build`.
+
+> **If this repository is private:** the image on ghcr.io is private too. Run `docker login ghcr.io -u <your-github-username>` once on the Docker host, using a [personal access token](https://github.com/settings/tokens) with the `read:packages` scope as the password. The `curl` commands above also only work when the repository is public. For a private repository, clone it instead.
 
 ### 3. Deploy agents
 
@@ -168,6 +195,14 @@ oceanic-agent version
 
 To uninstall locally on Windows, run `"C:\Program Files\OCeanic\oceanic-agent.exe" uninstall` as Administrator, or use **Uninstall agent** in the dashboard.
 
+## Publishing images
+
+`.github/workflows/docker.yml` vets and tests the code on every push and pull request. Then it builds the image for `linux/amd64` and `linux/arm64` and publishes it to `ghcr.io/<owner>/oceanic`:
+- every push to `main` updates `:latest`
+- a tag like `v1.2.0` produces `:1.2.0` and `:1.2`
+
+To cut a release, run `git tag v1.0.0 && git push --tags`. Agents built into that image report the same version.
+
 ## Building from source
 
 Requires Go 1.26+.
@@ -176,7 +211,7 @@ Requires Go 1.26+.
 make all      # dist/oceanic-server + dist/agents/* for every platform
 make run      # serves on :8080 using ./data
 make test     # vet (linux + windows) and unit tests
-make docker   # builds oceanic-rmm:latest
+make docker   # builds oceanic-rmm:latest (multi-arch: docker buildx build --platform linux/amd64,linux/arm64 .)
 ```
 
 ## Security notes
