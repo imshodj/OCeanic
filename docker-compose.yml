@@ -1,0 +1,38 @@
+# OCeanic RMM behind a Cloudflare Tunnel — no inbound ports are opened.
+#
+#   1. cp .env.example .env   and fill it in
+#   2. docker compose up -d --build
+#
+# In Cloudflare Zero Trust, the tunnel's public hostname
+# (e.g. rmm.example.com) must point at the service:  http://oceanic:8080
+services:
+  oceanic:
+    build: .
+    image: oceanic-rmm:latest
+    container_name: oceanic
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - oceanic-data:/data
+    # No "ports:" on purpose. Everything arrives through cloudflared.
+    # Uncomment for LAN-only access while testing:
+    # ports:
+    #   - "127.0.0.1:8080:8080"
+    networks: [oceanic]
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: oceanic-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - oceanic
+    networks: [oceanic]
+
+volumes:
+  oceanic-data:
+
+networks:
+  oceanic:
