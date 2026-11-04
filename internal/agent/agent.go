@@ -157,6 +157,11 @@ func (a *Agent) jobLoop(ctx context.Context) {
 		backoff = 2 * time.Second
 		for _, j := range jobs {
 			j := j
+			if j.Type == protocol.JobTerminal {
+				// Long-lived and interactive: don't occupy a script slot.
+				go a.runTerminal(ctx, j)
+				continue
+			}
 			a.jobSem <- struct{}{}
 			go func() {
 				defer func() { <-a.jobSem }()

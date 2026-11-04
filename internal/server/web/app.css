@@ -192,3 +192,13 @@ pre.output { background: var(--code-bg); color: var(--code-fg); padding: 14px; b
   .view { padding: 16px; }
   .search { min-width: 0; width: 100%; }
 }
+
+/* terminal */
+.term-bar { margin-bottom: 10px; }
+.term-status { font-size: 13px; font-weight: 500; }
+.term-status.ok { color: var(--good); }
+.term-status.err { color: var(--crit); }
+.term-wrap { background: #111214; border-radius: 12px; padding: 10px 4px 10px 12px; height: max(360px, calc(100vh - 330px)); border: 1px solid var(--border); }
+.term-wrap #term { height: 100%; }
+.term-wrap.full { position: fixed; inset: 0; z-index: 40; border-radius: 0; height: auto; padding: 12px; }
+@media (max-width: 820px) { .term-wrap { height: 60vh; } }

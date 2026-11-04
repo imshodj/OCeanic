@@ -109,6 +109,7 @@ async function route() {
   const page = parts[0];
   $$("nav a").forEach(a => a.classList.toggle("active", a.dataset.nav === page));
   setRefresh(null);
+  if (state.cleanup) { state.cleanup(); state.cleanup = null; }
   state.selected.clear();
   try {
     switch (page) {
@@ -226,14 +227,15 @@ async function pageDevice(id, tab) {
   const d = await api("GET", `/api/devices/${id}`);
   const si = d.sysinfo || {};
   const m = d.metrics || {};
-  const tabs = ["overview", "performance", "software", "services", "activity", "notes"];
+  const tabs = ["overview", "terminal", "performance", "software", "services", "activity", "notes"];
   view.innerHTML = `
     <div class="page-head">
       <div><div class="muted small"><a href="#/devices">Devices</a> / ${esc(d.org_name)}</div>
         <h1>${osIcon(d.os)} ${esc(devName(d))} ${statusPill(d.online)}</h1>
         <div class="sub">${esc(d.platform)} · agent ${esc(d.agent_version)} · last seen ${fmtAgo(d.last_seen)}</div></div>
       <div class="row">
-        <button class="btn primary" data-action="dev-script" data-id="${d.id}" data-os="${esc(d.os)}">Run script</button>
+        <a class="btn primary" href="#/devices/${d.id}/terminal">${d.os === "windows" ? "PowerShell" : "Shell"}</a>
+        <button class="btn" data-action="dev-script" data-id="${d.id}" data-os="${esc(d.os)}">Run script</button>
         <button class="btn" data-action="dev-job" data-type="reboot" data-id="${d.id}">Reboot</button>
         <button class="btn" data-action="dev-job" data-type="shutdown" data-id="${d.id}">Shut down</button>
         <button class="btn" data-action="dev-job" data-type="inventory" data-id="${d.id}">Refresh inventory</button>
@@ -327,6 +329,8 @@ async function pageDevice(id, tab) {
     const load = async () => { body.innerHTML = `<div class="card flush">${jobsTable(await api("GET", `/api/devices/${id}/jobs`))}</div>`; };
     await load();
     setRefresh(load, 10000);
+  } else if (tab === "terminal") {
+    await openTerminal(body, d);
   } else if (tab === "notes") {
     body.innerHTML = `<div class="card"><form id="notes" class="form"><textarea name="notes" rows="12" placeholder="Passwords don't belong here — but warranty info, location, quirks do.">${esc(d.notes)}</textarea><div><button class="btn primary">Save notes</button></div></form></div>`;
     $("#notes").addEventListener("submit", async e => {
@@ -335,6 +339,98 @@ async function pageDevice(id, tab) {
       toast("Notes saved");
     });
   }
+}
+
+// ---------- interactive terminal (xterm.js over WebSocket) ----------
+let xtermLoaded;
+function loadXterm() {
+  if (!xtermLoaded) {
+    const css = document.createElement("link");
+    css.rel = "stylesheet"; css.href = "vendor/xterm.css";
+    document.head.appendChild(css);
+    const js = src => new Promise((ok, fail) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = fail; document.head.appendChild(s); });
+    xtermLoaded = js("vendor/xterm.js").then(() => js("vendor/addon-fit.js"));
+  }
+  return xtermLoaded;
+}
+
+async function openTerminal(body, d) {
+  const shells = d.os === "windows" ? [["powershell", "Windows PowerShell"], ["cmd", "Command Prompt"], ["pwsh", "PowerShell 7"]] : [["bash", "bash"], ["sh", "sh"], ["pwsh", "PowerShell 7"]];
+  let pref = ""; try { pref = localStorage.getItem("oceanic-shell-" + d.os) || ""; } catch {}
+  body.innerHTML = `
+    <div class="term-bar row">
+      <select id="term-shell" aria-label="Shell">${shells.map(([v, n]) => `<option value="${v}" ${v === pref ? "selected" : ""}>${n}</option>`).join("")}</select>
+      <button class="btn primary" id="term-connect">Connect</button>
+      <button class="btn" id="term-full" title="Toggle full screen (Shift+Esc to exit)">⤢ Full screen</button>
+      <span id="term-status" class="term-status muted">${d.online ? "Ready" : "Device is offline. It will connect if it comes back within 30s."}</span>
+      <span class="muted small" style="margin-left:auto">Runs as ${d.os === "windows" ? "SYSTEM" : "root"} · closes after 30 min idle</span>
+    </div>
+    <div id="term-wrap" class="term-wrap"><div id="term"></div></div>`;
+  await loadXterm();
+  const term = new window.Terminal({
+    cursorBlink: true, fontSize: 13.5, scrollback: 10000, allowProposedApi: false,
+    fontFamily: 'ui-monospace, "Cascadia Mono", "Cascadia Code", Menlo, Consolas, "DejaVu Sans Mono", monospace',
+    theme: { background: "#111214", foreground: "#e6e6e3", cursor: "#e6e6e3", selectionBackground: "#3987e566" },
+  });
+  const fit = new window.FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open($("#term"));
+  fit.fit();
+  term.writeln("\x1b[90mOCeanic remote terminal: " + devName(d) + ". Choose a shell and press Connect.\x1b[0m");
+
+  const status = (t, cls = "") => { const el = $("#term-status"); if (el) { el.textContent = t; el.className = "term-status " + cls; } };
+  const btn = $("#term-connect");
+  const enc = new TextEncoder();
+  let ws = null, ended = false;
+
+  const sendResize = () => {
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+  };
+  const ro = new ResizeObserver(() => { try { fit.fit(); } catch {} });
+  ro.observe($("#term-wrap"));
+  term.onResize(sendResize);
+  term.onData(data => { if (ws && ws.readyState === 1) ws.send(enc.encode(data)); });
+  term.onBinary(data => { if (ws && ws.readyState === 1) ws.send(Uint8Array.from(data, c => c.charCodeAt(0))); });
+
+  const disconnect = () => { if (ws) { ws.onclose = null; ws.close(); ws = null; } btn.textContent = "Connect"; };
+  const connect = () => {
+    const shell = $("#term-shell").value;
+    try { localStorage.setItem("oceanic-shell-" + d.os, shell); } catch {}
+    fit.fit();
+    term.reset();
+    ended = false;
+    status("Connecting… waiting for the agent", "");
+    btn.textContent = "Disconnect";
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    ws = new WebSocket(`${proto}://${location.host}/api/devices/${d.id}/terminal?shell=${shell}&cols=${term.cols}&rows=${term.rows}`);
+    ws.binaryType = "arraybuffer";
+    ws.onmessage = ev => {
+      if (typeof ev.data !== "string") { term.write(new Uint8Array(ev.data)); return; }
+      let m; try { m = JSON.parse(ev.data); } catch { return; }
+      if (m.type === "ready") { status("● Connected", "ok"); sendResize(); term.focus(); }
+      else if (m.type === "exit") { ended = true; status(`Shell exited (code ${m.code ?? 0}). Press Connect for a new session.`); term.writeln(`\r\n\x1b[90m[shell exited with code ${m.code ?? 0}]\x1b[0m`); }
+      else if (m.type === "error") { ended = true; status(m.message, "err"); term.writeln(`\r\n\x1b[31m${m.message}\x1b[0m`); }
+    };
+    ws.onclose = () => {
+      ws = null; btn.textContent = "Connect";
+      if (!ended) { status("Disconnected"); term.writeln("\r\n\x1b[90m[disconnected]\x1b[0m"); }
+    };
+  };
+  btn.addEventListener("click", () => ws ? (disconnect(), status("Disconnected")) : connect());
+  $("#term-shell").addEventListener("change", () => { if (ws) { disconnect(); connect(); } });
+  const full = () => { $("#term-wrap").classList.toggle("full"); setTimeout(() => { fit.fit(); term.focus(); }, 50); };
+  $("#term-full").addEventListener("click", full);
+  // Shift+Esc leaves full screen; swallow it so no ESC byte reaches the shell.
+  term.attachCustomKeyEventHandler(e => {
+    if (e.key === "Escape" && e.shiftKey) {
+      if (e.type === "keydown" && $("#term-wrap")?.classList.contains("full")) full();
+      return false;
+    }
+    return true;
+  });
+
+  state.cleanup = () => { disconnect(); ro.disconnect(); term.dispose(); };
+  if (d.online) connect();
 }
 
 function shellOptions(os, selected) {
@@ -619,7 +715,7 @@ document.addEventListener("click", async e => {
     }
   } catch (err) { toast(err.message, true); }
 });
-document.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !e.target.closest?.(".xterm")) closeModal(); });
 
 function commonOS(ids) {
   const oses = new Set((state.devs || []).filter(d => ids.includes(d.id)).map(d => d.os));

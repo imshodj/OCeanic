@@ -112,6 +112,7 @@ const (
 	JobInventory = "inventory" // send fresh inventory
 	JobUninstall = "uninstall" // remove the agent
 	JobUpdate    = "update"    // self-update agent binary from server
+	JobTerminal  = "terminal"  // open an interactive PTY over WebSocket (job ID = session ID)
 )
 
 // Shells supported by script jobs.
@@ -132,6 +133,18 @@ type Job struct {
 	Script     string `json:"script,omitempty"`
 	Args       string `json:"args,omitempty"`
 	TimeoutSec int    `json:"timeout_sec,omitempty"`
+	Cols       int    `json:"cols,omitempty"` // terminal jobs: initial size
+	Rows       int    `json:"rows,omitempty"`
+}
+
+// TermControl is a JSON text frame on a terminal WebSocket. Raw terminal
+// bytes travel as binary frames in both directions.
+type TermControl struct {
+	Type    string `json:"type"` // resize | exit | error | ready
+	Cols    int    `json:"cols,omitempty"`
+	Rows    int    `json:"rows,omitempty"`
+	Code    int    `json:"code,omitempty"`
+	Message string `json:"message,omitempty"`
 }
 
 type JobsResponse struct {

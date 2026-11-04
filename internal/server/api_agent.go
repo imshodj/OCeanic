@@ -3,6 +3,7 @@ package server
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -102,6 +103,10 @@ func (s *Server) claimJobs(id string) ([]protocol.Job, error) {
 		if err := rows.Scan(&j.ID, &j.Type, &j.Shell, &j.Script, &j.TimeoutSec); err != nil {
 			rows.Close()
 			return nil, err
+		}
+		if j.Type == protocol.JobTerminal { // script holds the initial "COLSxROWS"
+			fmt.Sscanf(j.Script, "%dx%d", &j.Cols, &j.Rows)
+			j.Script = ""
 		}
 		jobs = append(jobs, j)
 	}

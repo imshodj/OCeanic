@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -88,6 +89,8 @@ type Server struct {
 	loginMu       sync.Mutex
 	loginFailures map[string][]time.Time
 
+	terms termRegistry
+
 	alertMu    sync.Mutex
 	alertState map[string]bool // key -> currently alerting
 }
@@ -158,6 +161,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/agent/jobs", s.agentAuth(s.handleAgentJobs))
 	mux.HandleFunc("POST /api/agent/result", s.agentAuth(s.handleAgentResult))
 	mux.HandleFunc("GET /api/agent/binary/{platform}", s.agentAuth(s.handleAgentBinary))
+	mux.HandleFunc("GET /api/agent/terminal/{sid}", s.agentAuth(s.handleAgentTerminal))
 
 	// --- admin auth ---
 	mux.HandleFunc("POST /api/login", s.handleLogin)
@@ -181,6 +185,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/devices/{id}", s.adminAuth(s.handleDeleteDevice))
 	mux.HandleFunc("GET /api/devices/{id}/metrics", s.adminAuth(s.handleDeviceMetrics))
 	mux.HandleFunc("GET /api/devices/{id}/jobs", s.adminAuth(s.handleDeviceJobs))
+	mux.HandleFunc("GET /api/devices/{id}/terminal", s.adminAuth(s.handleTerminal))
 
 	mux.HandleFunc("GET /api/jobs", s.adminAuth(s.handleListJobs))
 	mux.HandleFunc("POST /api/jobs", s.adminAuth(s.handleCreateJobs))
@@ -205,13 +210,19 @@ func (s *Server) Handler() http.Handler {
 	return securityHeaders(mux)
 }
 
+var validHost = regexp.MustCompile(`^[A-Za-z0-9.\-]+(:[0-9]+)?$`)
+
 func securityHeaders(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hd := w.Header()
 		hd.Set("X-Content-Type-Options", "nosniff")
 		hd.Set("X-Frame-Options", "DENY")
 		hd.Set("Referrer-Policy", "same-origin")
-		hd.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'")
+		connect := "'self'"
+		if validHost.MatchString(r.Host) { // explicit ws(s) origin for browsers where 'self' doesn't cover WebSockets
+			connect += " ws://" + r.Host + " wss://" + r.Host
+		}
+		hd.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src "+connect+"; frame-ancestors 'none'")
 		h.ServeHTTP(w, r)
 	})
 }

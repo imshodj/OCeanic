@@ -13,6 +13,7 @@ A self-hosted remote monitoring and management (RMM) tool for homelabs, similar 
 | **Monitoring** | Online/offline status, CPU, RAM and per-disk usage, uptime, logged-in users, local and public IP. Includes 7-day performance charts. |
 | **Inventory** | OS and build, CPU, RAM, manufacturer, model, serial, NICs, installed software (registry, dpkg, rpm, apk, pacman) and services. |
 | **Alerts** | Fires when a device goes offline, a disk reaches 90%, or memory reaches 95%. Shown on the dashboard and optionally pushed to a Discord, Slack, Mattermost or ntfy webhook. |
+| **Remote terminal** | Interactive PowerShell, cmd, PowerShell 7, bash or sh in the browser (xterm.js). It uses a real PTY: Windows ConPTY and Linux pty. Colors, tab completion, Ctrl+C, `vim` and `htop` all work. Window resizing and full-screen mode are supported. Sessions are audited and close after 30 minutes idle. |
 | **Remote scripting** | PowerShell, pwsh, cmd, bash, sh and Python, run as SYSTEM or root. Each job has a timeout and captures output and exit code. Jobs reach online agents in under a second through long-polling. Offline devices pick them up when they reconnect. |
 | **Automation library** | Built-in scripts: Windows Update (list or install), winget upgrade-all, Defender scan, BitLocker status, SMART disk health, event log errors, temp cleanup, install any MSI/EXE from a URL, Linux package updates, health summary, Docker status. You can add your own. |
 | **Actions** | Reboot, shutdown, start/stop/restart services, refresh inventory, self-update agent, remote uninstall. All of these work in bulk across selected devices. |
@@ -103,12 +104,15 @@ Data, a single SQLite file, lives in the `oceanic-data` volume at `/data/oceanic
         │                                                                                           │
         ├─ POST /api/agent/checkin   every 30s: metrics (+ inventory every 6h)                     SQLite
         ├─ GET  /api/agent/jobs      long-poll (25s); returns immediately when a job is queued
-        └─ POST /api/agent/result    script output + exit code
+        ├─ POST /api/agent/result    script output + exit code
+        └─ WS   /api/agent/terminal  opened on demand for a browser terminal; the server
+                                     bridges it to the browser's WebSocket
 ```
 
 - **Installer generation:** the image ships prebuilt agent binaries. When you download an installer, the server streams the binary for that platform and appends a small JSON trailer with the server URL, enrollment token and organization. Windows and Linux both ignore data after the end of an executable. When the agent runs, it reads its own trailer. No compiler or signing step runs at download time.
 - **Enrollment:** the agent trades the organization token for a per-device ID and secret. These are stored in `C:\ProgramData\OCeanic\agent.json` (readable only by SYSTEM and Administrators) or `/etc/oceanic/agent.json` (mode 0600). The token itself is not kept. Reinstalling on the same machine reuses the existing device record, matched by machine GUID or `/etc/machine-id`.
 - **Windows service:** `C:\Program Files\OCeanic\oceanic-agent.exe`, auto-start, with crash recovery that restarts it after 5s, 15s, then 60s. Logs go to `C:\ProgramData\OCeanic\agent.log`.
+- **Remote terminal:** opening the Terminal tab queues a `terminal` job. The agent receives it through its long-poll and dials *back* to the server over a WebSocket. The server then relays frames between the two WebSockets. Both connections are outbound from their own networks, and Cloudflare Tunnels carry WebSockets natively, so this still needs no open ports. Shells run as SYSTEM or root. On Windows, this requires Windows 10 1809 / Server 2019 or newer (ConPTY). Closing the tab kills the shell and everything it started. Shift+Esc leaves full-screen mode.
 - **Self-update:** the **Update agent** action downloads the server's current agent build. The running binary is swapped out, and the service restarts on the new version.
 
 ### Agent CLI
