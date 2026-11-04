@@ -111,20 +111,20 @@ func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 // ---------------- devices ----------------
 
 type deviceRow struct {
-	ID           string           `json:"id"`
-	OrgID        string           `json:"org_id"`
-	OrgName      string           `json:"org_name"`
-	Hostname     string           `json:"hostname"`
-	DisplayName  string           `json:"display_name"`
-	OS           string           `json:"os"`
-	Platform     string           `json:"platform"`
-	AgentVersion string           `json:"agent_version"`
-	RemoteIP     string           `json:"remote_ip"`
-	Notes        string           `json:"notes"`
-	EnrolledAt   int64            `json:"enrolled_at"`
-	LastSeen     int64            `json:"last_seen"`
-	Online       bool             `json:"online"`
-	Metrics      protocol.Metrics `json:"metrics"`
+	ID           string            `json:"id"`
+	OrgID        string            `json:"org_id"`
+	OrgName      string            `json:"org_name"`
+	Hostname     string            `json:"hostname"`
+	DisplayName  string            `json:"display_name"`
+	OS           string            `json:"os"`
+	Platform     string            `json:"platform"`
+	AgentVersion string            `json:"agent_version"`
+	RemoteIP     string            `json:"remote_ip"`
+	Notes        string            `json:"notes"`
+	EnrolledAt   int64             `json:"enrolled_at"`
+	LastSeen     int64             `json:"last_seen"`
+	Online       bool              `json:"online"`
+	Metrics      protocol.Metrics  `json:"metrics"`
 	SysInfo      *protocol.SysInfo `json:"sysinfo,omitempty"`
 }
 

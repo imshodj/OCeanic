@@ -27,20 +27,20 @@ var webFS embed.FS
 
 // Config is populated from environment variables (see README).
 type Config struct {
-	Listen        string
-	DataDir       string
-	AgentsDir     string
-	PublicURL     string
-	AdminUser     string
-	AdminPassword string
-	CFClientID    string
+	Listen         string
+	DataDir        string
+	AgentsDir      string
+	PublicURL      string
+	AdminUser      string
+	AdminPassword  string
+	CFClientID     string
 	CFClientSecret string
-	AlertWebhook  string
-	CheckinSec    int
-	OfflineAfter  time.Duration
-	MetricsDays   int
-	JobsDays      int
-	SecureCookies bool
+	AlertWebhook   string
+	CheckinSec     int
+	OfflineAfter   time.Duration
+	MetricsDays    int
+	JobsDays       int
+	SecureCookies  bool
 }
 
 func ConfigFromEnv() Config {

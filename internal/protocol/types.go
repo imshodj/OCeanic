@@ -25,27 +25,27 @@ type EnrollResponse struct {
 
 // SysInfo is the relatively static inventory of a device.
 type SysInfo struct {
-	Hostname        string      `json:"hostname"`
-	OS              string      `json:"os"`        // windows, linux, darwin
-	Platform        string      `json:"platform"`  // e.g. "Microsoft Windows 11 Pro"
-	PlatformVersion string      `json:"platform_version"`
-	KernelVersion   string      `json:"kernel_version"`
-	Arch            string      `json:"arch"`
-	CPUModel        string      `json:"cpu_model"`
-	CPUCores        int         `json:"cpu_cores"`
-	MemTotal        uint64      `json:"mem_total"`
-	BootTime        int64       `json:"boot_time"`
-	Manufacturer    string      `json:"manufacturer,omitempty"`
-	Model           string      `json:"model,omitempty"`
-	SerialNumber    string      `json:"serial_number,omitempty"`
-	Domain          string      `json:"domain,omitempty"`
-	LoggedInUsers   []string    `json:"logged_in_users,omitempty"`
-	Disks           []Disk      `json:"disks"`
-	NICs            []NIC       `json:"nics"`
-	Software        []Software  `json:"software,omitempty"`
-	Services        []Service   `json:"services,omitempty"`
-	AgentVersion    string      `json:"agent_version"`
-	CollectedAt     time.Time   `json:"collected_at"`
+	Hostname        string     `json:"hostname"`
+	OS              string     `json:"os"`       // windows, linux, darwin
+	Platform        string     `json:"platform"` // e.g. "Microsoft Windows 11 Pro"
+	PlatformVersion string     `json:"platform_version"`
+	KernelVersion   string     `json:"kernel_version"`
+	Arch            string     `json:"arch"`
+	CPUModel        string     `json:"cpu_model"`
+	CPUCores        int        `json:"cpu_cores"`
+	MemTotal        uint64     `json:"mem_total"`
+	BootTime        int64      `json:"boot_time"`
+	Manufacturer    string     `json:"manufacturer,omitempty"`
+	Model           string     `json:"model,omitempty"`
+	SerialNumber    string     `json:"serial_number,omitempty"`
+	Domain          string     `json:"domain,omitempty"`
+	LoggedInUsers   []string   `json:"logged_in_users,omitempty"`
+	Disks           []Disk     `json:"disks"`
+	NICs            []NIC      `json:"nics"`
+	Software        []Software `json:"software,omitempty"`
+	Services        []Service  `json:"services,omitempty"`
+	AgentVersion    string     `json:"agent_version"`
+	CollectedAt     time.Time  `json:"collected_at"`
 }
 
 type Disk struct {
@@ -150,9 +150,9 @@ type JobResult struct {
 
 // EmbeddedConfig is baked onto the end of generated installers.
 type EmbeddedConfig struct {
-	ServerURL          string `json:"server_url"`
-	EnrollToken        string `json:"enroll_token"`
-	OrgName            string `json:"org_name,omitempty"`
-	CFAccessClientID   string `json:"cf_access_client_id,omitempty"`
+	ServerURL            string `json:"server_url"`
+	EnrollToken          string `json:"enroll_token"`
+	OrgName              string `json:"org_name,omitempty"`
+	CFAccessClientID     string `json:"cf_access_client_id,omitempty"`
 	CFAccessClientSecret string `json:"cf_access_client_secret,omitempty"`
 }

@@ -51,11 +51,11 @@ func prepareCmd(cmd *exec.Cmd) {
 	}
 }
 
-func IsElevated() bool                              { return os.Geteuid() == 0 }
-func Elevate(args []string) error                   { return fmt.Errorf("please re-run with sudo") }
-func MessageBox(title, text string, isError bool)   {}
-func IsService() bool                               { return false }
-func RunService() error                             { return Run(context.Background()) }
+func IsElevated() bool                            { return os.Geteuid() == 0 }
+func Elevate(args []string) error                 { return fmt.Errorf("please re-run with sudo") }
+func MessageBox(title, text string, isError bool) {}
+func IsService() bool                             { return false }
+func RunService() error                           { return Run(context.Background()) }
 
 const unitTmpl = `[Unit]
 Description=%s
