@@ -1,6 +1,6 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/imshodj/oceanic/internal/protocol.AgentVersion=$(VERSION)
-AGENTS := windows/amd64 windows/arm64 linux/amd64 linux/arm64 linux/arm
+AGENTS := windows/amd64 windows/arm64 linux/amd64 linux/arm64 linux/arm darwin/arm64 darwin/amd64
 
 .PHONY: all server agents run docker test
 

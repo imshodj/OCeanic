@@ -36,7 +36,7 @@ const (
 
 var termShells = map[string]bool{
 	protocol.ShellPowerShell: true, protocol.ShellPwsh: true, protocol.ShellCmd: true,
-	protocol.ShellBash: true, protocol.ShellSh: true,
+	protocol.ShellBash: true, protocol.ShellSh: true, protocol.ShellZsh: true,
 }
 
 type termSession struct {
@@ -88,9 +88,13 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 	shell := r.URL.Query().Get("shell")
 	if shell == "" {
-		shell = protocol.ShellBash
-		if osName == "windows" {
+		switch osName {
+		case "windows":
 			shell = protocol.ShellPowerShell
+		case "darwin":
+			shell = protocol.ShellZsh
+		default:
+			shell = protocol.ShellBash
 		}
 	}
 	if !termShells[shell] {

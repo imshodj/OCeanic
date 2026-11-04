@@ -30,7 +30,9 @@ function fmtDur(sec) {
   return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
 }
 function fmtTime(ts) { return ts ? new Date(ts * 1000).toLocaleString() : "—"; }
-function osIcon(os) { return os === "windows" ? "⊞" : os === "linux" ? "🐧" : os === "darwin" ? "" : "•"; }
+function osIcon(os) { return os === "windows" ? "⊞" : os === "linux" ? "🐧" : os === "darwin" ? "🍏" : "•"; }
+function osLabel(os) { return { windows: "Windows", linux: "Linux", darwin: "macOS" }[os] || os || "unknown"; }
+const desktopOS = os => os === "windows" || os === "linux" || os === "darwin";
 function devName(d) { return d.display_name || d.hostname; }
 function maxDisk(m) { return (m && m.disks || []).reduce((a, d) => Math.max(a, d.pct), 0); }
 function bar(pct) {
@@ -128,7 +130,7 @@ async function route() {
 // ---------- dashboard ----------
 async function pageDashboard() {
   const d = await api("GET", "/api/dashboard");
-  const os = Object.entries(d.by_os).map(([k, v]) => `${osIcon(k)} ${esc(k || "unknown")}: <b>${v}</b>`).join(" &nbsp; ") || "—";
+  const os = Object.entries(d.by_os).map(([k, v]) => `${osIcon(k)} ${esc(osLabel(k))}: <b>${v}</b>`).join(" &nbsp; ") || "—";
   view.innerHTML = `
     <div class="page-head"><div><h1>Dashboard</h1><div class="sub">${os}</div></div>
       <a class="btn primary" href="#/deploy">+ Add devices</a></div>
@@ -356,17 +358,18 @@ async function openDesktop(body, d) {
       <button class="btn" id="rd-cad" title="Send Ctrl+Alt+Del" ${d.os === "windows" ? "" : "disabled"}>Ctrl+Alt+Del</button>
       <button class="btn" id="rd-paste" title="Type text on the remote machine">Paste text</button>
       <label class="row" style="flex-direction:row;gap:6px;font-weight:500"><input type="checkbox" id="rd-view"> View only</label>
+      ${d.os === "darwin" ? `<label class="row" style="flex-direction:row;gap:6px;font-weight:500" title="Your Ctrl key acts as the Mac's Command key (so Ctrl+C copies)"><input type="checkbox" id="rd-swap" ${/Mac/.test(navigator.platform) ? "" : "checked"}> Ctrl → ⌘</label>` : ""}
       <button class="btn" id="rd-full">⤢ Full screen</button>
       <span id="rd-status" class="term-status muted">${d.online ? "Ready" : "Device is offline."}</span>
       <span id="rd-stats" class="muted small" style="margin-left:auto"></span>
     </div>
     <div id="rd-wrap" class="rd-wrap"><canvas id="rd-canvas" tabindex="0" width="16" height="9"></canvas>
-      <div id="rd-hint" class="rd-hint">${d.os === "windows" || d.os === "linux" ? "Press Connect to view this device's screen." : "Remote desktop isn't available for this OS."}</div></div>`;
+      <div id="rd-hint" class="rd-hint">${desktopOS(d.os) ? "Press Connect to view this device's screen." : "Remote desktop isn't available for this OS."}</div></div>`;
   const canvas = $("#rd-canvas"), ctx2d = canvas.getContext("2d"), btn = $("#rd-connect");
   const status = (t, cls = "") => { const el = $("#rd-status"); if (el) { el.textContent = t; el.className = "term-status " + cls; } };
   const hint = t => { const h = $("#rd-hint"); if (h) { h.textContent = t || ""; h.classList.toggle("hidden", !t); } };
   const qmap = { auto: { q: 60, scale: 0 }, high: { q: 75, scale: 1 }, balanced: { q: 60, scale: 0.75 }, low: { q: 45, scale: 0.5 } };
-  let ws = null, ended = false, chain = Promise.resolve(), frames = 0, bytes = 0, lastStats = performance.now();
+  let ws = null, ended = false, infoMsg = "", chain = Promise.resolve(), frames = 0, bytes = 0, lastStats = performance.now();
   const held = new Set();
   const send = obj => { if (ws && ws.readyState === 1 && !(obj.t !== "cfg" && obj.t !== "refresh" && obj.t !== "cad" && $("#rd-view").checked)) ws.send(JSON.stringify(obj)); };
 
@@ -388,7 +391,7 @@ async function openDesktop(body, d) {
   const releaseAll = () => { for (const code of held) send({ t: "ku", code }); held.clear(); };
   const disconnect = () => { releaseAll(); if (ws) { ws.onclose = null; ws.close(); ws = null; } btn.textContent = "Connect"; $("#rd-stats").textContent = ""; };
   const connect = () => {
-    ended = false; frames = 0; bytes = 0;
+    ended = false; infoMsg = ""; frames = 0; bytes = 0;
     status("Connecting… starting the remote helper"); hint("Connecting…");
     btn.textContent = "Disconnect";
     const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -407,8 +410,9 @@ async function openDesktop(body, d) {
       if (m.type === "ready") { status("Waiting for the screen…"); send({ t: "cfg", ...qmap[$("#rd-quality").value] }); }
       else if (m.type === "size") {
         canvas.width = m.w; canvas.height = m.h; hint("");
-        status("● Connected", "ok"); canvas.focus();
+        status(infoMsg || "● Connected", infoMsg ? "warn" : "ok"); canvas.focus();
       } else if (m.type === "error") { ended = true; status(m.message, "err"); hint(m.message); }
+      else if (m.type === "info") { infoMsg = m.message; status(m.message, "warn"); }
     };
     ws.onclose = () => { ws = null; btn.textContent = "Connect"; releaseAll(); if (!ended) { status("Disconnected"); } $("#rd-stats").textContent = ""; };
   };
@@ -455,15 +459,19 @@ async function openDesktop(body, d) {
     if (steps) { send({ t: "wh", dy: steps }); wheelAcc -= steps * 100; }
     if (e.deltaX && Math.abs(e.deltaX) > 50) send({ t: "wh", dx: Math.sign(e.deltaX) });
   }, { passive: false });
+  const swapMap = { ControlLeft: "MetaLeft", ControlRight: "MetaRight", MetaLeft: "ControlLeft", MetaRight: "ControlRight" };
+  const mapCode = c => ($("#rd-swap")?.checked && swapMap[c]) || c;
   canvas.addEventListener("keydown", e => {
     if (!ws) return;
     e.preventDefault(); e.stopPropagation();
-    held.add(e.code); send({ t: "kd", code: e.code });
+    const code = mapCode(e.code);
+    held.add(code); send({ t: "kd", code });
   });
   canvas.addEventListener("keyup", e => {
     if (!ws) return;
     e.preventDefault(); e.stopPropagation();
-    held.delete(e.code); send({ t: "ku", code: e.code });
+    const code = mapCode(e.code);
+    held.delete(code); send({ t: "ku", code });
   });
   canvas.addEventListener("blur", releaseAll);
 
@@ -474,7 +482,7 @@ async function openDesktop(body, d) {
   }, 2000);
 
   state.cleanup = () => { disconnect(); clearInterval(statsTimer); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); };
-  if (d.online && (d.os === "windows" || d.os === "linux")) connect();
+  if (d.online && desktopOS(d.os)) connect();
 }
 
 // ---------- interactive terminal (xterm.js over WebSocket) ----------
@@ -491,7 +499,8 @@ function loadXterm() {
 }
 
 async function openTerminal(body, d) {
-  const shells = d.os === "windows" ? [["powershell", "Windows PowerShell"], ["cmd", "Command Prompt"], ["pwsh", "PowerShell 7"]] : [["bash", "bash"], ["sh", "sh"], ["pwsh", "PowerShell 7"]];
+  const shells = d.os === "windows" ? [["powershell", "Windows PowerShell"], ["cmd", "Command Prompt"], ["pwsh", "PowerShell 7"]]
+    : d.os === "darwin" ? [["zsh", "zsh"], ["bash", "bash"], ["sh", "sh"]] : [["bash", "bash"], ["sh", "sh"], ["pwsh", "PowerShell 7"]];
   let pref = ""; try { pref = localStorage.getItem("oceanic-shell-" + d.os) || ""; } catch {}
   body.innerHTML = `
     <div class="term-bar row">
@@ -570,7 +579,7 @@ async function openTerminal(body, d) {
 }
 
 function shellOptions(os, selected) {
-  const list = os === "windows" ? ["powershell", "cmd", "pwsh", "python"] : os ? ["bash", "sh", "python", "pwsh"] : ["powershell", "cmd", "pwsh", "bash", "sh", "python"];
+  const list = os === "windows" ? ["powershell", "cmd", "pwsh", "python"] : os === "darwin" ? ["zsh", "bash", "sh", "python", "pwsh"] : os ? ["bash", "sh", "python", "pwsh"] : ["powershell", "cmd", "pwsh", "bash", "zsh", "sh", "python"];
   return list.map(s => `<option ${s === selected ? "selected" : ""}>${s}</option>`).join("");
 }
 
@@ -646,7 +655,7 @@ async function runScriptDialog(deviceIds, os) {
   const scripts = state.scripts.filter(s => !os || s.os === "any" || s.os === os);
   openModal(`Run script on ${deviceIds.length} device(s)`, `
     <form id="run" class="form">
-      <label>From library<select name="script_id"><option value="">— Ad-hoc script —</option>${scripts.map(s => `<option value="${s.id}">${esc(s.name)}${s.os !== "any" ? ` [${s.os}]` : ""}</option>`).join("")}</select></label>
+      <label>From library<select name="script_id"><option value="">— Ad-hoc script —</option>${scripts.map(s => `<option value="${s.id}">${esc(s.name)}${s.os !== "any" ? ` [${osLabel(s.os)}]` : ""}</option>`).join("")}</select></label>
       <div id="adhoc" class="form">
         <div class="row"><label>Shell<select name="shell">${shellOptions(os)}</select></label><label>Timeout (seconds)<input name="timeout_sec" type="number" value="300" min="5"></label></div>
         <label>Script<textarea class="code" name="script" spellcheck="false" placeholder="Write-Output 'Hello from OCeanic'"></textarea></label>
@@ -698,7 +707,7 @@ async function pageScripts() {
       <button class="btn primary" data-action="script-new">+ New script</button></div>
     <div class="card flush"><div class="table-wrap"><table><thead><tr><th>Name</th><th>Shell</th><th>OS</th><th>Timeout</th><th></th></tr></thead><tbody>
     ${state.scripts.map(s => `<tr><td><b>${esc(s.name)}</b>${s.builtin ? ' <span class="badge">built-in</span>' : ""}<div class="muted small">${esc(s.description)}</div></td>
-      <td class="mono small">${esc(s.shell)}</td><td>${esc(s.os)}</td><td class="num">${s.timeout_sec}s</td>
+      <td class="mono small">${esc(s.shell)}</td><td>${esc(s.os === "any" ? "any" : osLabel(s.os))}</td><td class="num">${s.timeout_sec}s</td>
       <td><div class="row" style="justify-content:flex-end"><button class="btn sm" data-action="script-edit" data-id="${s.id}">Edit</button><button class="btn sm danger" data-action="script-delete" data-id="${s.id}">Delete</button></div></td></tr>`).join("") || `<tr><td colspan="5" class="empty">No scripts</td></tr>`}
     </tbody></table></div></div>`;
 }
@@ -708,7 +717,7 @@ function scriptEditor(s = { name: "", description: "", shell: "powershell", os: 
     <form id="script-form" class="form">
       <div class="row"><label>Name<input name="name" required value="${esc(s.name)}"></label>
         <label>Shell<select name="shell">${shellOptions("", s.shell)}</select></label>
-        <label>Target OS<select name="os">${["any", "windows", "linux"].map(o => `<option ${o === s.os ? "selected" : ""}>${o}</option>`).join("")}</select></label>
+        <label>Target OS<select name="os">${["any", "windows", "linux", "darwin"].map(o => `<option value="${o}" ${o === s.os ? "selected" : ""}>${o === "any" ? "any" : osLabel(o)}</option>`).join("")}</select></label>
         <label>Timeout (s)<input name="timeout_sec" type="number" min="5" value="${s.timeout_sec}"></label></div>
       <label>Description<input name="description" value="${esc(s.description)}"></label>
       <label>Script<textarea class="code" name="body" spellcheck="false" required>${esc(s.body)}</textarea></label>
@@ -738,6 +747,8 @@ async function pageDeploy() {
     <div class="grid">${orgs.map(o => {
       const ps = `irm ${base}/install/${o.enroll_token}/windows.ps1 | iex`;
       const sh = `curl -fsSL ${base}/install/${o.enroll_token}/linux.sh | sudo sh`;
+      const mac = `curl -fsSL ${base}/install/${o.enroll_token}/macos.sh | sudo sh`;
+      const hasMac = (info.platforms || []).some(p => p.startsWith("darwin"));
       return `<div class="card">
         <div class="page-head" style="margin-bottom:12px"><div><h2 style="margin:0">${esc(o.name)}</h2><div class="muted small">${o.devices} device(s) · ${o.online} online</div></div>
           <div class="row"><button class="btn sm" data-action="org-rename" data-id="${o.id}" data-name="${esc(o.name)}">Rename</button>
@@ -745,9 +756,11 @@ async function pageDeploy() {
           <button class="btn sm danger" data-action="org-delete" data-id="${o.id}">Delete</button></div></div>
         <div class="form">
           <div><div class="muted small" style="margin-bottom:6px">Download installer (double-click on Windows, or <code>Setup.exe /S</code> for silent / GPO / Intune)</div>
-            <div class="row">${(info.platforms || []).map(p => `<a class="btn ${p === "windows-amd64" ? "primary" : ""}" href="/api/orgs/${o.id}/installer/${p}" download>⬇ ${label[p] || p}</a>`).join("")}</div></div>
+            <div class="row">${(info.platforms || []).filter(p => !p.startsWith("darwin")).map(p => `<a class="btn ${p === "windows-amd64" ? "primary" : ""}" href="/api/orgs/${o.id}/installer/${p}" download>⬇ ${label[p] || p}</a>`).join("")}</div></div>
           <label>Windows one-liner (elevated PowerShell)<div class="copy-box"><code>${esc(ps)}</code><button type="button" class="btn sm" data-action="copy" data-text="${esc(ps)}">Copy</button></div></label>
           <label>Linux one-liner<div class="copy-box"><code>${esc(sh)}</code><button type="button" class="btn sm" data-action="copy" data-text="${esc(sh)}">Copy</button></div></label>
+          ${hasMac ? `<label>macOS one-liner (Terminal on the Mac; Intel or Apple Silicon)<div class="copy-box"><code>${esc(mac)}</code><button type="button" class="btn sm" data-action="copy" data-text="${esc(mac)}">Copy</button></div>
+            <span class="muted small" style="font-weight:400">For remote desktop, allow <b>oceanic-agent</b> under <i>Screen Recording</i> and <i>Accessibility</i> in System Settings → Privacy &amp; Security on the Mac (one time).</span></label>` : ""}
         </div></div>`;
     }).join("")}</div>`;
   $("#new-org").addEventListener("submit", async e => {

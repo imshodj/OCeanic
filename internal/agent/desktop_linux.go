@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/coder/websocket"
 	"image"
 	"log"
 	"os"
@@ -80,35 +81,6 @@ func (s *x11Screen) Capture(scale float64) (*image.RGBA, error) {
 	}
 	s.scaled = downscale(s.full, s.scaled, scale)
 	return s.scaled, nil
-}
-
-// downscale is a simple box filter; good enough to keep text legible at 50–75%.
-func downscale(src, dst *image.RGBA, scale float64) *image.RGBA {
-	sw, sh := src.Rect.Dx(), src.Rect.Dy()
-	dw, dh := max(1, int(float64(sw)*scale)), max(1, int(float64(sh)*scale))
-	if dst == nil || dst.Rect.Dx() != dw || dst.Rect.Dy() != dh {
-		dst = image.NewRGBA(image.Rect(0, 0, dw, dh))
-	}
-	for y := 0; y < dh; y++ {
-		sy0, sy1 := y*sh/dh, max(y*sh/dh+1, (y+1)*sh/dh)
-		for x := 0; x < dw; x++ {
-			sx0, sx1 := x*sw/dw, max(x*sw/dw+1, (x+1)*sw/dw)
-			var r, g, b, n int
-			for yy := sy0; yy < sy1; yy++ {
-				o := yy*src.Stride + sx0*4
-				for xx := sx0; xx < sx1; xx++ {
-					r += int(src.Pix[o])
-					g += int(src.Pix[o+1])
-					b += int(src.Pix[o+2])
-					o += 4
-					n++
-				}
-			}
-			d := y*dst.Stride + x*4
-			dst.Pix[d], dst.Pix[d+1], dst.Pix[d+2], dst.Pix[d+3] = uint8(r/n), uint8(g/n), uint8(b/n), 255
-		}
-	}
-	return dst
 }
 
 func (s *x11Screen) fake(typ byte, detail byte, x, y int16) error {
@@ -281,7 +253,7 @@ func findX11() (display, xauth string) {
 
 // launchDesktopHelper runs "desktop-helper" against the active X display and
 // waits for it to finish.
-func launchDesktopHelper(ctx context.Context, sid string, onSAS func()) error {
+func launchDesktopHelper(ctx context.Context, sid string, dial func() (*websocket.Conn, error), onSAS func()) error {
 	display, xauth := findX11()
 	if display == "" {
 		return errors.New("no graphical (X11) session found on this machine")

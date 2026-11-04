@@ -45,6 +45,12 @@ func collectDisks() []protocol.Disk {
 		if skipFS[p.Fstype] || seen[p.Mountpoint] {
 			continue
 		}
+		// macOS: "/" is the sealed system volume and user data lives on
+		// /System/Volumes/Data; the other system volumes are noise.
+		if runtime.GOOS == "darwin" && ((strings.HasPrefix(p.Mountpoint, "/System/Volumes/") && p.Mountpoint != "/System/Volumes/Data") ||
+			strings.HasPrefix(p.Mountpoint, "/private/var/vm") || p.Fstype == "devfs" || p.Fstype == "nullfs") {
+			continue
+		}
 		if runtime.GOOS == "linux" && (strings.HasPrefix(p.Mountpoint, "/snap/") || strings.HasPrefix(p.Mountpoint, "/var/lib/docker") || strings.HasPrefix(p.Mountpoint, "/boot/efi")) {
 			continue
 		}
@@ -150,7 +156,7 @@ func isLoopbackOrVirtual(i psnet.InterfaceStat) bool {
 		}
 	}
 	n := strings.ToLower(i.Name)
-	for _, p := range []string{"veth", "docker", "br-", "virbr", "lo", "cni", "flannel", "cali"} {
+	for _, p := range []string{"veth", "docker", "br-", "virbr", "lo", "cni", "flannel", "cali", "utun", "awdl", "llw", "anpi", "ap1", "gif", "stf", "bridge"} {
 		if strings.HasPrefix(n, p) {
 			return true
 		}

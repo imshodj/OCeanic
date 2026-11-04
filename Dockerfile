@@ -11,7 +11,7 @@ ENV CGO_ENABLED=0
 RUN LDFLAGS="-s -w -X github.com/imshodj/oceanic/internal/protocol.AgentVersion=${VERSION}" && \
     go build -trimpath -ldflags "$LDFLAGS" -o dist/oceanic-server ./cmd/oceanic-server && \
     mkdir -p dist/agents && \
-    for p in windows/amd64 windows/arm64 linux/amd64 linux/arm64 linux/arm; do \
+    for p in windows/amd64 windows/arm64 linux/amd64 linux/arm64 linux/arm darwin/arm64 darwin/amd64; do \
       os=${p%/*}; arch=${p#*/}; ext=""; [ "$os" = windows ] && ext=.exe; \
       echo "building agent $os/$arch" && \
       GOOS=$os GOARCH=$arch GOARM=7 go build -trimpath -ldflags "$LDFLAGS" \

@@ -122,6 +122,11 @@ func interpreter(shell, script, dir string) (file string, argv []string, body []
 		body = bytes.ReplaceAll(body, []byte("\n"), []byte("\r\n"))
 		body = bytes.ReplaceAll(body, []byte("\r\r\n"), []byte("\r\n"))
 		return "script.cmd", []string{"cmd.exe", "/d", "/c", path("script.cmd")}, body, nil
+	case protocol.ShellZsh:
+		if runtime.GOOS == "windows" {
+			return "", nil, nil, errors.New("zsh scripts are not supported on Windows")
+		}
+		return "script.sh", []string{"zsh", path("script.sh")}, []byte(normalizeLF(script)), nil
 	case protocol.ShellBash:
 		return "script.sh", []string{"bash", path("script.sh")}, []byte(normalizeLF(script)), nil
 	case protocol.ShellSh:

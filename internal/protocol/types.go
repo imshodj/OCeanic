@@ -123,6 +123,7 @@ const (
 	ShellCmd        = "cmd"
 	ShellBash       = "bash"
 	ShellSh         = "sh"
+	ShellZsh        = "zsh"
 	ShellPython     = "python"
 )
 

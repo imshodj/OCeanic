@@ -22,9 +22,11 @@ var platforms = map[string]string{
 	"linux-amd64":   "oceanic-agent-linux-amd64",
 	"linux-arm64":   "oceanic-agent-linux-arm64",
 	"linux-arm":     "oceanic-agent-linux-arm",
+	"darwin-arm64":  "oceanic-agent-darwin-arm64",
+	"darwin-amd64":  "oceanic-agent-darwin-amd64",
 }
 
-var platformOrder = []string{"windows-amd64", "windows-arm64", "linux-amd64", "linux-arm64", "linux-arm"}
+var platformOrder = []string{"windows-amd64", "windows-arm64", "linux-amd64", "linux-arm64", "linux-arm", "darwin-arm64", "darwin-amd64"}
 
 func (s *Server) agentPath(platform string) (string, bool) {
 	name, ok := platforms[platform]
@@ -77,7 +79,7 @@ func (s *Server) serveAgentBinary(w http.ResponseWriter, r *http.Request, platfo
 	defer f.Close()
 	st, _ := f.Stat()
 	var tail []byte
-	if cfg != nil {
+	if cfg != nil && !strings.HasPrefix(platform, "darwin") { // keep macOS code signatures intact; macos.sh passes flags instead
 		if tail, err = trailer.Build(cfg); err != nil {
 			writeErr(w, 500, err.Error())
 			return
@@ -176,6 +178,46 @@ chmod +x "$TMP"
 "$TMP" install --silent
 echo "OCeanic agent installed."
 `))
+
+var macTmpl = template.Must(template.New("mac").Parse(`#!/bin/sh
+# OCeanic RMM agent installer for {{.Org}} (macOS 11+, Intel and Apple Silicon)
+# Usage:  curl -fsSL {{.Base}}/install/{{.Token}}/macos.sh | sudo sh
+set -eu
+if [ "$(id -u)" -ne 0 ]; then echo "Please run with sudo." >&2; exit 1; fi
+case "$(uname -m)" in
+  arm64) ARCH=arm64 ;;
+  x86_64) ARCH=amd64 ;;
+  *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+TMP="$(mktemp -t oceanic-agent)"
+trap 'rm -f "$TMP"' EXIT
+echo "Downloading OCeanic agent (darwin-$ARCH)..."
+curl -fsSL {{if .CFID}}-H 'CF-Access-Client-Id: {{.CFID}}' -H 'CF-Access-Client-Secret: {{.CFSecret}}' {{end}}-o "$TMP" "{{.Base}}/install/{{.Token}}/agent/darwin-$ARCH"
+chmod +x "$TMP"
+"$TMP" install --silent --server '{{.Base}}' --token '{{.Token}}'{{if .CFID}} --cf-id '{{.CFID}}' --cf-secret '{{.CFSecret}}'{{end}}
+cat <<'MSG'
+
+OCeanic agent installed and running (launchd: com.oceanic.agent).
+
+For remote desktop, macOS asks for two permissions the first time you
+connect. On this Mac, open System Settings -> Privacy & Security and allow
+"oceanic-agent" under both:
+  * Screen Recording  (to see the screen)
+  * Accessibility     (to control mouse and keyboard)
+If it isn't listed, click + and add /usr/local/oceanic/oceanic-agent
+(press Cmd+Shift+G in the file picker to type the path).
+MSG
+`))
+
+func (s *Server) handleInstallMac(w http.ResponseWriter, r *http.Request) {
+	o, ok := s.orgByToken(r.PathValue("token"))
+	if !ok {
+		http.Error(w, "echo 'Invalid or rotated installer link' >&2; exit 1", 404)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	macTmpl.Execute(w, s.scriptVarsFor(r, o))
+}
 
 func (s *Server) scriptVarsFor(r *http.Request, o org) scriptVars {
 	return scriptVars{Base: s.publicURL(r), Token: o.EnrollToken, Org: o.Name, CFID: s.cfg.CFClientID, CFSecret: s.cfg.CFClientSecret}
