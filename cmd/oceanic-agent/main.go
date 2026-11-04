@@ -73,6 +73,18 @@ func main() {
 		if err := agent.RunService(); err != nil {
 			log.Fatal(err)
 		}
+	case "desktop-helper":
+		// Internal: launched by the agent service inside the interactive
+		// session to capture the screen and inject input.
+		if len(args) != 1 {
+			os.Exit(2)
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := agent.RunDesktopHelper(ctx, args[0]); err != nil {
+			log.Printf("desktop helper: %v", err)
+			os.Exit(1)
+		}
 	case "status":
 		if ec, err := agent.EmbeddedConfig(); err == nil {
 			fmt.Printf("embedded installer config: server=%s org=%q\n", ec.ServerURL, ec.OrgName)

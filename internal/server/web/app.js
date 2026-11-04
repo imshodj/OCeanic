@@ -227,14 +227,15 @@ async function pageDevice(id, tab) {
   const d = await api("GET", `/api/devices/${id}`);
   const si = d.sysinfo || {};
   const m = d.metrics || {};
-  const tabs = ["overview", "terminal", "performance", "software", "services", "activity", "notes"];
+  const tabs = ["overview", "desktop", "terminal", "performance", "software", "services", "activity", "notes"];
   view.innerHTML = `
     <div class="page-head">
       <div><div class="muted small"><a href="#/devices">Devices</a> / ${esc(d.org_name)}</div>
         <h1>${osIcon(d.os)} ${esc(devName(d))} ${statusPill(d.online)}</h1>
         <div class="sub">${esc(d.platform)} · agent ${esc(d.agent_version)} · last seen ${fmtAgo(d.last_seen)}</div></div>
       <div class="row">
-        <a class="btn primary" href="#/devices/${d.id}/terminal">${d.os === "windows" ? "PowerShell" : "Shell"}</a>
+        <a class="btn primary" href="#/devices/${d.id}/desktop">Remote desktop</a>
+        <a class="btn" href="#/devices/${d.id}/terminal">${d.os === "windows" ? "PowerShell" : "Shell"}</a>
         <button class="btn" data-action="dev-script" data-id="${d.id}" data-os="${esc(d.os)}">Run script</button>
         <button class="btn" data-action="dev-job" data-type="reboot" data-id="${d.id}">Reboot</button>
         <button class="btn" data-action="dev-job" data-type="shutdown" data-id="${d.id}">Shut down</button>
@@ -244,7 +245,7 @@ async function pageDevice(id, tab) {
         <button class="btn danger" data-action="dev-job" data-type="uninstall" data-id="${d.id}">Uninstall agent</button>
         <button class="btn danger" data-action="dev-delete" data-id="${d.id}">Delete</button>
       </div></div>
-    <div class="tabs">${tabs.map(t => `<button data-tab="${t}" class="${t === tab ? "active" : ""}">${t[0].toUpperCase() + t.slice(1)}${t === "software" && si.software ? ` (${si.software.length})` : ""}</button>`).join("")}</div>
+    <div class="tabs">${tabs.map(t => `<button data-tab="${t}" class="${t === tab ? "active" : ""}">${t === "desktop" ? "Remote desktop" : t[0].toUpperCase() + t.slice(1)}${t === "software" && si.software ? ` (${si.software.length})` : ""}</button>`).join("")}</div>
     <div id="tab-body"></div>`;
   $$(".tabs button").forEach(b => b.addEventListener("click", () => { location.hash = `#/devices/${id}/${b.dataset.tab}`; }));
   const body = $("#tab-body");
@@ -329,6 +330,8 @@ async function pageDevice(id, tab) {
     const load = async () => { body.innerHTML = `<div class="card flush">${jobsTable(await api("GET", `/api/devices/${id}/jobs`))}</div>`; };
     await load();
     setRefresh(load, 10000);
+  } else if (tab === "desktop") {
+    await openDesktop(body, d);
   } else if (tab === "terminal") {
     await openTerminal(body, d);
   } else if (tab === "notes") {
@@ -339,6 +342,139 @@ async function pageDevice(id, tab) {
       toast("Notes saved");
     });
   }
+}
+
+// ---------- remote desktop (JPEG tiles over WebSocket onto a canvas) ----------
+async function openDesktop(body, d) {
+  let q = "auto"; try { q = localStorage.getItem("oceanic-rd-quality") || "auto"; } catch {}
+  body.innerHTML = `
+    <div class="term-bar row">
+      <button class="btn primary" id="rd-connect">Connect</button>
+      <select id="rd-quality" aria-label="Quality">
+        ${[["auto", "Auto quality"], ["high", "High (100%)"], ["balanced", "Balanced (75%)"], ["low", "Low bandwidth (50%)"]].map(([v, n]) => `<option value="${v}" ${v === q ? "selected" : ""}>${n}</option>`).join("")}
+      </select>
+      <button class="btn" id="rd-cad" title="Send Ctrl+Alt+Del" ${d.os === "windows" ? "" : "disabled"}>Ctrl+Alt+Del</button>
+      <button class="btn" id="rd-paste" title="Type text on the remote machine">Paste text</button>
+      <label class="row" style="flex-direction:row;gap:6px;font-weight:500"><input type="checkbox" id="rd-view"> View only</label>
+      <button class="btn" id="rd-full">⤢ Full screen</button>
+      <span id="rd-status" class="term-status muted">${d.online ? "Ready" : "Device is offline."}</span>
+      <span id="rd-stats" class="muted small" style="margin-left:auto"></span>
+    </div>
+    <div id="rd-wrap" class="rd-wrap"><canvas id="rd-canvas" tabindex="0" width="16" height="9"></canvas>
+      <div id="rd-hint" class="rd-hint">${d.os === "windows" || d.os === "linux" ? "Press Connect to view this device's screen." : "Remote desktop isn't available for this OS."}</div></div>`;
+  const canvas = $("#rd-canvas"), ctx2d = canvas.getContext("2d"), btn = $("#rd-connect");
+  const status = (t, cls = "") => { const el = $("#rd-status"); if (el) { el.textContent = t; el.className = "term-status " + cls; } };
+  const hint = t => { const h = $("#rd-hint"); if (h) { h.textContent = t || ""; h.classList.toggle("hidden", !t); } };
+  const qmap = { auto: { q: 60, scale: 0 }, high: { q: 75, scale: 1 }, balanced: { q: 60, scale: 0.75 }, low: { q: 45, scale: 0.5 } };
+  let ws = null, ended = false, chain = Promise.resolve(), frames = 0, bytes = 0, lastStats = performance.now();
+  const held = new Set();
+  const send = obj => { if (ws && ws.readyState === 1 && !(obj.t !== "cfg" && obj.t !== "refresh" && obj.t !== "cad" && $("#rd-view").checked)) ws.send(JSON.stringify(obj)); };
+
+  const drawFrame = async buf => {
+    const v = new DataView(buf);
+    if (v.getUint8(0) !== 1) return;
+    const n = v.getUint16(1);
+    let o = 3;
+    const parts = [];
+    for (let i = 0; i < n; i++) {
+      const x = v.getUint16(o), y = v.getUint16(o + 2), len = v.getUint32(o + 8);
+      parts.push({ x, y, blob: new Blob([new Uint8Array(buf, o + 12, len)], { type: "image/jpeg" }) });
+      o += 12 + len;
+    }
+    const bmps = await Promise.all(parts.map(p => createImageBitmap(p.blob)));
+    bmps.forEach((b, i) => { ctx2d.drawImage(b, parts[i].x, parts[i].y); b.close(); });
+  };
+
+  const releaseAll = () => { for (const code of held) send({ t: "ku", code }); held.clear(); };
+  const disconnect = () => { releaseAll(); if (ws) { ws.onclose = null; ws.close(); ws = null; } btn.textContent = "Connect"; $("#rd-stats").textContent = ""; };
+  const connect = () => {
+    ended = false; frames = 0; bytes = 0;
+    status("Connecting… starting the remote helper"); hint("Connecting…");
+    btn.textContent = "Disconnect";
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    ws = new WebSocket(`${proto}://${location.host}/api/devices/${d.id}/desktop`);
+    ws.binaryType = "arraybuffer";
+    ws.onmessage = ev => {
+      if (typeof ev.data !== "string") {
+        const buf = ev.data; bytes += buf.byteLength;
+        chain = chain.then(() => drawFrame(buf)).catch(() => {}).then(() => {
+          frames++;
+          if (ws && ws.readyState === 1) ws.send(new Uint8Array([1])); // ack -> next frame
+        });
+        return;
+      }
+      let m; try { m = JSON.parse(ev.data); } catch { return; }
+      if (m.type === "ready") { status("Waiting for the screen…"); send({ t: "cfg", ...qmap[$("#rd-quality").value] }); }
+      else if (m.type === "size") {
+        canvas.width = m.w; canvas.height = m.h; hint("");
+        status("● Connected", "ok"); canvas.focus();
+      } else if (m.type === "error") { ended = true; status(m.message, "err"); hint(m.message); }
+    };
+    ws.onclose = () => { ws = null; btn.textContent = "Connect"; releaseAll(); if (!ended) { status("Disconnected"); } $("#rd-stats").textContent = ""; };
+  };
+  btn.addEventListener("click", () => ws ? (disconnect(), status("Disconnected")) : connect());
+  $("#rd-quality").addEventListener("change", e => { try { localStorage.setItem("oceanic-rd-quality", e.target.value); } catch {} send({ t: "cfg", ...qmap[e.target.value] }); });
+  $("#rd-cad").addEventListener("click", () => { send({ t: "cad" }); canvas.focus(); });
+  $("#rd-paste").addEventListener("click", async () => {
+    let text = "";
+    try { text = await navigator.clipboard.readText(); } catch {}
+    text = prompt("Text to type on the remote machine:", text);
+    if (text) send({ t: "text", s: text });
+    canvas.focus();
+  });
+  const full = async () => {
+    const wrap = $("#rd-wrap");
+    if (document.fullscreenElement) { await document.exitFullscreen(); return; }
+    try { await wrap.requestFullscreen(); await navigator.keyboard?.lock?.(); } catch {}
+    canvas.focus();
+  };
+  $("#rd-full").addEventListener("click", full);
+
+  // --- input ---
+  const pos = e => {
+    const r = canvas.getBoundingClientRect();
+    // The canvas keeps its aspect ratio (object-fit: contain), so map through the drawn area.
+    const s = Math.min(r.width / canvas.width, r.height / canvas.height);
+    const dw = canvas.width * s, dh = canvas.height * s, ox = (r.width - dw) / 2, oy = (r.height - dh) / 2;
+    return { x: Math.min(1, Math.max(0, (e.clientX - r.left - ox) / dw)), y: Math.min(1, Math.max(0, (e.clientY - r.top - oy) / dh)) };
+  };
+  let pendingMove = null;
+  canvas.addEventListener("pointermove", e => {
+    if (!pendingMove) requestAnimationFrame(() => { if (pendingMove) send({ t: "mm", ...pendingMove }); pendingMove = null; });
+    pendingMove = pos(e);
+  });
+  const btnMap = { 0: 0, 1: 1, 2: 2 };
+  canvas.addEventListener("pointerdown", e => { canvas.focus(); canvas.setPointerCapture(e.pointerId); send({ t: "md", b: btnMap[e.button] ?? 0, ...pos(e) }); e.preventDefault(); });
+  canvas.addEventListener("pointerup", e => { send({ t: "mu", b: btnMap[e.button] ?? 0, ...pos(e) }); e.preventDefault(); });
+  canvas.addEventListener("contextmenu", e => e.preventDefault());
+  let wheelAcc = 0;
+  canvas.addEventListener("wheel", e => {
+    e.preventDefault();
+    wheelAcc += e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+    const steps = Math.trunc(wheelAcc / 100);
+    if (steps) { send({ t: "wh", dy: steps }); wheelAcc -= steps * 100; }
+    if (e.deltaX && Math.abs(e.deltaX) > 50) send({ t: "wh", dx: Math.sign(e.deltaX) });
+  }, { passive: false });
+  canvas.addEventListener("keydown", e => {
+    if (!ws) return;
+    e.preventDefault(); e.stopPropagation();
+    held.add(e.code); send({ t: "kd", code: e.code });
+  });
+  canvas.addEventListener("keyup", e => {
+    if (!ws) return;
+    e.preventDefault(); e.stopPropagation();
+    held.delete(e.code); send({ t: "ku", code: e.code });
+  });
+  canvas.addEventListener("blur", releaseAll);
+
+  const statsTimer = setInterval(() => {
+    const now = performance.now(), dt = (now - lastStats) / 1000;
+    if (ws && frames) $("#rd-stats").textContent = `${canvas.width}×${canvas.height} · ${(frames / dt).toFixed(1)} fps · ${(bytes * 8 / dt / 1e6).toFixed(2)} Mbit/s`;
+    frames = 0; bytes = 0; lastStats = now;
+  }, 2000);
+
+  state.cleanup = () => { disconnect(); clearInterval(statsTimer); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); };
+  if (d.online && (d.os === "windows" || d.os === "linux")) connect();
 }
 
 // ---------- interactive terminal (xterm.js over WebSocket) ----------

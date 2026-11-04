@@ -162,6 +162,10 @@ func (a *Agent) jobLoop(ctx context.Context) {
 				go a.runTerminal(ctx, j)
 				continue
 			}
+			if j.Type == protocol.JobDesktop {
+				go a.runDesktop(ctx, j)
+				continue
+			}
 			a.jobSem <- struct{}{}
 			go func() {
 				defer func() { <-a.jobSem }()

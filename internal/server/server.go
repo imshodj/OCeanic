@@ -161,7 +161,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/agent/jobs", s.agentAuth(s.handleAgentJobs))
 	mux.HandleFunc("POST /api/agent/result", s.agentAuth(s.handleAgentResult))
 	mux.HandleFunc("GET /api/agent/binary/{platform}", s.agentAuth(s.handleAgentBinary))
-	mux.HandleFunc("GET /api/agent/terminal/{sid}", s.agentAuth(s.handleAgentTerminal))
+	mux.HandleFunc("GET /api/agent/session/{sid}", s.agentAuth(s.handleAgentTerminal))
+	mux.HandleFunc("GET /api/agent/terminal/{sid}", s.agentAuth(s.handleAgentTerminal)) // agents <= first terminal release
 
 	// --- admin auth ---
 	mux.HandleFunc("POST /api/login", s.handleLogin)
@@ -186,6 +187,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/devices/{id}/metrics", s.adminAuth(s.handleDeviceMetrics))
 	mux.HandleFunc("GET /api/devices/{id}/jobs", s.adminAuth(s.handleDeviceJobs))
 	mux.HandleFunc("GET /api/devices/{id}/terminal", s.adminAuth(s.handleTerminal))
+	mux.HandleFunc("GET /api/devices/{id}/desktop", s.adminAuth(s.handleDesktop))
 
 	mux.HandleFunc("GET /api/jobs", s.adminAuth(s.handleListJobs))
 	mux.HandleFunc("POST /api/jobs", s.adminAuth(s.handleCreateJobs))

@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
-	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -36,22 +34,7 @@ func clampSize(cols, rows int) (int, int) {
 
 // runTerminal dials back to the server and bridges a local PTY shell to it.
 func (a *Agent) runTerminal(ctx context.Context, j protocol.Job) {
-	u := a.cfg.ServerURL + "/api/agent/terminal/" + j.ID
-	u = "ws" + strings.TrimPrefix(u, "http") // http->ws, https->wss
-
-	hdr := http.Header{}
-	req, _ := a.c.newReq(ctx, "GET", "/", nil)
-	for _, k := range []string{"Authorization", "User-Agent", "CF-Access-Client-Id", "CF-Access-Client-Secret"} {
-		if v := req.Header.Get(k); v != "" {
-			hdr.Set(k, v)
-		}
-	}
-	hc := *a.c.http
-	hc.Timeout = 0 // websocket lifetime is governed by contexts, not a client timeout
-
-	dctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	conn, _, err := websocket.Dial(dctx, u, &websocket.DialOptions{HTTPHeader: hdr, HTTPClient: &hc})
-	cancel()
+	conn, err := dialSession(ctx, a.c, j.ID)
 	if err != nil {
 		log.Printf("terminal %s: dial: %v", j.ID, err)
 		return

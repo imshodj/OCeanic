@@ -113,6 +113,7 @@ const (
 	JobUninstall = "uninstall" // remove the agent
 	JobUpdate    = "update"    // self-update agent binary from server
 	JobTerminal  = "terminal"  // open an interactive PTY over WebSocket (job ID = session ID)
+	JobDesktop   = "desktop"   // start a remote desktop helper (job ID = session ID)
 )
 
 // Shells supported by script jobs.

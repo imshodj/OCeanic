@@ -27,10 +27,11 @@ import (
 // whose ID is the session ID), so connection setup takes well under a second.
 
 const (
-	termConnectWait = 30 * time.Second
-	termIdleTimeout = 30 * time.Minute
-	termPingEvery   = 25 * time.Second // keeps Cloudflare's ~100s idle timer happy
-	termReadLimit   = 1 << 20
+	termConnectWait  = 30 * time.Second
+	termIdleTimeout  = 30 * time.Minute
+	termPingEvery    = 25 * time.Second // keeps Cloudflare's ~100s idle timer happy
+	termReadLimit    = 1 << 20
+	desktopReadLimit = 64 << 20
 )
 
 var termShells = map[string]bool{
@@ -39,9 +40,9 @@ var termShells = map[string]bool{
 }
 
 type termSession struct {
-	id, deviceID string
-	agentCh      chan *websocket.Conn
-	done         chan struct{}
+	id, deviceID, kind string
+	agentCh            chan *websocket.Conn
+	done               chan struct{}
 }
 
 type termRegistry struct {
@@ -99,6 +100,24 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 	cols, _ := strconv.Atoi(r.URL.Query().Get("cols"))
 	rows, _ := strconv.Atoi(r.URL.Query().Get("rows"))
 
+	s.runSession(w, r, sessionSpec{
+		deviceID: devID, host: host, kind: protocol.JobTerminal, label: shell,
+		name: "Terminal (" + shell + ")", shell: shell, script: fmt.Sprintf("%dx%d", cols, rows),
+	})
+}
+
+// sessionSpec describes an interactive session (terminal or remote desktop).
+type sessionSpec struct {
+	deviceID, host string
+	kind           string // protocol.JobTerminal | protocol.JobDesktop
+	label          string // for logs: shell name or "remote desktop"
+	name           string // job name shown in Activity
+	shell, script  string // copied onto the job row
+}
+
+// runSession upgrades the browser connection, asks the agent to dial back,
+// and bridges the two until either side ends.
+func (s *Server) runSession(w http.ResponseWriter, r *http.Request, spec sessionSpec) {
 	// Default Accept options reject cross-origin requests (Origin must match
 	// Host), which together with the session cookie stops CSWSH.
 	browser, err := websocket.Accept(w, r, nil)
@@ -109,25 +128,26 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 	defer browser.CloseNow()
 	ctx := r.Context()
 	who := user(r)
+	devID := spec.deviceID
 
-	sess := &termSession{id: newID(), deviceID: devID, agentCh: make(chan *websocket.Conn, 1), done: make(chan struct{})}
+	sess := &termSession{id: newID(), deviceID: devID, kind: spec.kind, agentCh: make(chan *websocket.Conn, 1), done: make(chan struct{})}
 	s.terms.add(sess)
 	defer s.terms.remove(sess.id)
 	defer close(sess.done)
 
 	started := time.Now()
 	_, err = s.db.Exec(`INSERT INTO jobs(id,device_id,type,name,shell,script,timeout_sec,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)`,
-		sess.id, devID, protocol.JobTerminal, "Terminal ("+shell+")", shell, fmt.Sprintf("%dx%d", cols, rows), int(termIdleTimeout.Seconds()), who, started.Unix())
+		sess.id, devID, spec.kind, spec.name, spec.shell, spec.script, int(termIdleTimeout.Seconds()), who, started.Unix())
 	if err != nil {
 		sendCtrl(ctx, browser, protocol.TermControl{Type: "error", Message: err.Error()})
 		return
 	}
 	s.hub.notify(devID)
-	s.audit(who, "terminal.open", devID, shell+" on "+host)
+	s.audit(who, spec.kind+".open", devID, spec.label+" on "+spec.host)
 
 	finish := func(status, msg string) {
 		s.db.Exec(`UPDATE jobs SET status=?, output=?, finished_at=? WHERE id=?`, status, msg, time.Now().Unix(), sess.id)
-		s.audit(who, "terminal.close", devID, msg)
+		s.audit(who, spec.kind+".close", devID, msg)
 	}
 
 	var agent *websocket.Conn
@@ -136,8 +156,8 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 	case <-time.After(termConnectWait):
 		// Never picked up: cancel so an agent that reconnects later doesn't act on it.
 		s.db.Exec(`UPDATE jobs SET status='cancelled', error='device did not connect', finished_at=? WHERE id=? AND status='queued'`, time.Now().Unix(), sess.id)
-		finish("failed", "device did not open the terminal within 30s")
-		sendCtrl(ctx, browser, protocol.TermControl{Type: "error", Message: "The device didn't respond within 30 seconds. Is it online?"})
+		finish("failed", "device did not connect within 30s")
+		sendCtrl(ctx, browser, protocol.TermControl{Type: "error", Message: "The device didn't respond within 30 seconds. Is it online, and is its agent up to date?"})
 		browser.Close(websocket.StatusNormalClosure, "timeout")
 		return
 	case <-ctx.Done():
@@ -146,13 +166,24 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 	defer agent.CloseNow()
 
-	reason := s.bridge(ctx, browser, agent)
+	reason := s.bridge(ctx, browser, agent, spec.kind == protocol.JobDesktop)
 	dur := time.Since(started).Round(time.Second)
-	finish("done", fmt.Sprintf("Interactive %s session by %s, %s. Ended: %s", shell, who, dur, reason))
+	finish("done", fmt.Sprintf("Interactive %s session by %s, %s. Ended: %s", spec.label, who, dur, reason))
+}
+
+// handleDesktop is the browser side of a remote desktop session.
+func (s *Server) handleDesktop(w http.ResponseWriter, r *http.Request) {
+	devID := r.PathValue("id")
+	var host string
+	if err := s.db.QueryRow(`SELECT hostname FROM devices WHERE id=?`, devID).Scan(&host); err != nil {
+		writeErr(w, 404, "device not found")
+		return
+	}
+	s.runSession(w, r, sessionSpec{deviceID: devID, host: host, kind: protocol.JobDesktop, label: "remote desktop", name: "Remote desktop"})
 }
 
 // bridge relays frames both ways until one side closes or the session idles out.
-func (s *Server) bridge(parent context.Context, browser, agent *websocket.Conn) string {
+func (s *Server) bridge(parent context.Context, browser, agent *websocket.Conn, desktop bool) string {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	var last atomic.Int64
@@ -166,7 +197,11 @@ func (s *Server) bridge(parent context.Context, browser, agent *websocket.Conn) 
 				reasons <- name + " disconnected"
 				return
 			}
-			last.Store(time.Now().Unix())
+			// For desktops, screen frames and acks flow constantly; only viewer
+			// input (text frames from the browser) counts as activity.
+			if !desktop || (name == "browser" && typ == websocket.MessageText) {
+				last.Store(time.Now().Unix())
+			}
 			if err := to.Write(ctx, typ, data); err != nil {
 				reasons <- "write failed"
 				return
@@ -213,14 +248,18 @@ func (s *Server) bridge(parent context.Context, browser, agent *websocket.Conn) 
 func (s *Server) handleAgentTerminal(w http.ResponseWriter, r *http.Request) {
 	sess := s.terms.get(r.PathValue("sid"))
 	if sess == nil || sess.deviceID != deviceID(r) {
-		writeErr(w, 404, "no such terminal session")
+		writeErr(w, 404, "no such session")
 		return
 	}
 	c, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		return
 	}
-	c.SetReadLimit(termReadLimit)
+	if sess.kind == protocol.JobDesktop {
+		c.SetReadLimit(desktopReadLimit) // a full 4K frame can be several MB
+	} else {
+		c.SetReadLimit(termReadLimit)
+	}
 	select {
 	case sess.agentCh <- c:
 	default: // a second connection for the same session: refuse
