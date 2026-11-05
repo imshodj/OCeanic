@@ -110,6 +110,8 @@ func doInstall(args []string) int {
 	fs.BoolVar(silent, "quiet", false, "alias for --silent")
 	server := fs.String("server", "", "server URL (overrides embedded)")
 	token := fs.String("token", "", "enrollment token (overrides embedded)")
+	cfID := fs.String("cf-id", "", "Cloudflare Access service token client ID")
+	cfSecret := fs.String("cf-secret", "", "Cloudflare Access service token secret")
 	if err := fs.Parse(normalizeFlags(args)); err != nil {
 		return 2
 	}
@@ -131,6 +133,9 @@ func doInstall(args []string) int {
 	}
 	if *token != "" {
 		cfg.EnrollToken = *token
+	}
+	if *cfID != "" {
+		cfg.CFAccessClientID, cfg.CFAccessClientSecret = *cfID, *cfSecret
 	}
 	if cfg.ServerURL == "" || cfg.EnrollToken == "" {
 		return fail("This agent has no embedded server configuration.\nDownload the installer from your OCeanic dashboard, or pass --server and --token.")

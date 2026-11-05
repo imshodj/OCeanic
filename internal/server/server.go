@@ -153,6 +153,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 	mux.HandleFunc("GET /install/{token}/windows.ps1", s.handleInstallPS1)
 	mux.HandleFunc("GET /install/{token}/linux.sh", s.handleInstallSh)
+	mux.HandleFunc("GET /install/{token}/macos.sh", s.handleInstallMac)
 	mux.HandleFunc("GET /install/{token}/agent/{platform}", s.handlePublicAgentDownload)
 
 	// --- agent API (agent bearer auth) ---

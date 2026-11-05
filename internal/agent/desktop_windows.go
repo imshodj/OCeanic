@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/coder/websocket"
 	"image"
 	"log"
 	"os"
@@ -422,7 +423,7 @@ func activeSession() (uint32, error) {
 	return console, nil
 }
 
-func launchDesktopHelper(ctx context.Context, sid string, onSAS func()) error {
+func launchDesktopHelper(ctx context.Context, sid string, dial func() (*websocket.Conn, error), onSAS func()) error {
 	session, err := activeSession()
 	if err != nil {
 		return err

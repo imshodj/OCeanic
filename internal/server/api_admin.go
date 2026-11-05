@@ -358,7 +358,7 @@ func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 
 var validShells = map[string]bool{
 	protocol.ShellPowerShell: true, protocol.ShellPwsh: true, protocol.ShellCmd: true,
-	protocol.ShellBash: true, protocol.ShellSh: true, protocol.ShellPython: true,
+	protocol.ShellBash: true, protocol.ShellSh: true, protocol.ShellZsh: true, protocol.ShellPython: true,
 }
 
 var validJobTypes = map[string]bool{

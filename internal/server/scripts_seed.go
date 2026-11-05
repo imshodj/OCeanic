@@ -77,6 +77,25 @@ if ($file -like '*.msi') {
 Remove-Item $file -Force -ErrorAction SilentlyContinue
 exit $(if ($p.ExitCode -eq 3010) { 0 } else { $p.ExitCode })`, 1800},
 
+	{"builtin-mac-updates-list", "macOS: list software updates", "Shows pending macOS and Apple app updates.", "zsh", "darwin", `softwareupdate --list 2>&1`, 600},
+
+	{"builtin-mac-updates-install", "macOS: install all updates (no restart)", "Installs every recommended update. Major OS upgrades on Apple Silicon may still need a user to approve them on the Mac.", "zsh", "darwin", `softwareupdate --install --all --agree-to-license 2>&1
+echo
+softwareupdate --list 2>&1 | grep -qi restart && echo "*** One or more updates need a restart ***" || true`, 7200},
+
+	{"builtin-mac-health", "macOS: health summary", "OS version, uptime, memory pressure, disks, and top processes.", "zsh", "darwin", `sw_vers
+echo; echo "== Uptime =="; uptime
+echo; echo "== Memory pressure =="; memory_pressure | tail -n 1
+echo; echo "== Disks =="; df -h / /System/Volumes/Data 2>/dev/null
+echo; echo "== Battery =="; pmset -g batt | tail -n +2
+echo; echo "== Top processes (CPU) =="; ps -Ao pid,%cpu,%mem,comm -r | head -n 11`, 120},
+
+	{"builtin-mac-security", "macOS: security status", "FileVault, Gatekeeper, SIP, firewall, and automatic-update settings.", "zsh", "darwin", `echo "FileVault:   $(fdesetup status | head -n 1)"
+echo "Gatekeeper:  $(spctl --status 2>&1)"
+echo "SIP:         $(csrutil status 2>&1)"
+echo "Firewall:    $(/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate 2>&1)"
+echo "Auto-update: $(defaults read /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallMacOSUpdates 2>/dev/null || echo 'not set (system default)')"`, 120},
+
 	{"builtin-linux-updates", "Linux: check for package updates", "Works with apt, dnf, yum, zypper, pacman and apk.", "sh", "linux", `if command -v apt-get >/dev/null; then apt-get update -qq && apt list --upgradable 2>/dev/null
 elif command -v dnf >/dev/null; then dnf -q check-update; true
 elif command -v yum >/dev/null; then yum -q check-update; true

@@ -1,17 +1,31 @@
 # OCeanic RMM behind a Cloudflare Tunnel — no inbound ports are opened.
 #
 #   1. cp .env.example .env   and fill it in
-#   2. docker compose up -d --build
+#   2. docker compose up -d
+#
+# This pulls the prebuilt image from GitHub Container Registry. To build from
+# source instead:  docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+# Update later with:  docker compose pull && docker compose up -d
 #
 # In Cloudflare Zero Trust, the tunnel's public hostname
 # (e.g. rmm.example.com) must point at the service:  http://oceanic:8080
 services:
   oceanic:
-    build: .
-    image: oceanic-rmm:latest
+    image: ghcr.io/imshodj/oceanic:${OCEANIC_VERSION:-latest}
     container_name: oceanic
     restart: unless-stopped
-    env_file: .env
+    # Values come from .env (Docker Compose) or the stack's environment
+    # variables (Portainer, Dockge, Unraid...). See .env.example.
+    environment:
+      OCEANIC_PUBLIC_URL: ${OCEANIC_PUBLIC_URL:-}
+      OCEANIC_ADMIN_USER: ${OCEANIC_ADMIN_USER:-admin}
+      OCEANIC_ADMIN_PASSWORD: ${OCEANIC_ADMIN_PASSWORD:-}
+      OCEANIC_ALERT_WEBHOOK: ${OCEANIC_ALERT_WEBHOOK:-}
+      OCEANIC_CF_ACCESS_CLIENT_ID: ${OCEANIC_CF_ACCESS_CLIENT_ID:-}
+      OCEANIC_CF_ACCESS_CLIENT_SECRET: ${OCEANIC_CF_ACCESS_CLIENT_SECRET:-}
+      OCEANIC_CHECKIN_SECONDS: ${OCEANIC_CHECKIN_SECONDS:-30}
+      OCEANIC_METRICS_RETENTION_DAYS: ${OCEANIC_METRICS_RETENTION_DAYS:-7}
+      OCEANIC_JOBS_RETENTION_DAYS: ${OCEANIC_JOBS_RETENTION_DAYS:-90}
     volumes:
       - oceanic-data:/data
     # No "ports:" on purpose. Everything arrives through cloudflared.

@@ -25,6 +25,8 @@ func startPTY(shell string, cols, rows int) (ptyProc, error) {
 		path, args = "pwsh", []string{"-NoLogo"}
 	case "sh":
 		path, args = "/bin/sh", []string{"-l"}
+	case "zsh":
+		path, args = "/bin/zsh", []string{"-l"}
 	default: // bash, falling back to sh on minimal systems (Alpine, BusyBox)
 		if p, err := exec.LookPath("bash"); err == nil {
 			path, args = p, []string{"-l"}

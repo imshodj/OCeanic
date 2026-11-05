@@ -15,6 +15,7 @@ package agent
 //   text    JSON input events, see desktopInput.
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/binary"
@@ -22,6 +23,7 @@ import (
 	"errors"
 	"image"
 	"image/jpeg"
+	"io"
 	"log"
 	"os"
 	"runtime"
@@ -89,26 +91,28 @@ func (e *frameEncoder) changedStrips(cur *image.RGBA) []image.Rectangle {
 	for ty := 0; ty < h; ty += tileSize {
 		th := min(tileSize, h-ty)
 		runStart := -1
-		for tx := 0; tx <= w; tx += tileSize {
-			changed := false
-			if tx < w {
-				if full {
-					changed = true
-				} else {
-					tw := min(tileSize, w-tx)
-					for y := ty; y < ty+th; y++ {
-						off := y*cur.Stride + tx*4
-						if !bytes.Equal(cur.Pix[off:off+tw*4], e.prev[off:off+tw*4]) {
-							changed = true
-							break
-						}
+		for tx := 0; ; tx += tileSize {
+			if tx >= w { // end of row: close any open run (w needn't be a multiple of tileSize)
+				if runStart >= 0 {
+					out = append(out, image.Rect(runStart, ty, w, ty+th))
+				}
+				break
+			}
+			changed := full
+			if !full {
+				tw := min(tileSize, w-tx)
+				for y := ty; y < ty+th; y++ {
+					off := y*cur.Stride + tx*4
+					if !bytes.Equal(cur.Pix[off:off+tw*4], e.prev[off:off+tw*4]) {
+						changed = true
+						break
 					}
 				}
 			}
 			if changed && runStart < 0 {
 				runStart = tx
 			} else if !changed && runStart >= 0 {
-				out = append(out, image.Rect(runStart, ty, min(tx, w), ty+th))
+				out = append(out, image.Rect(runStart, ty, tx, ty+th))
 				runStart = -1
 			}
 		}
@@ -163,6 +167,35 @@ func (e *frameEncoder) encode(cur *image.RGBA) []byte {
 	return msg
 }
 
+// downscale is a simple box filter; good enough to keep text legible at 50–75%.
+func downscale(src, dst *image.RGBA, scale float64) *image.RGBA {
+	sw, sh := src.Rect.Dx(), src.Rect.Dy()
+	dw, dh := max(1, int(float64(sw)*scale)), max(1, int(float64(sh)*scale))
+	if dst == nil || dst.Rect.Dx() != dw || dst.Rect.Dy() != dh {
+		dst = image.NewRGBA(image.Rect(0, 0, dw, dh))
+	}
+	for y := 0; y < dh; y++ {
+		sy0, sy1 := y*sh/dh, max(y*sh/dh+1, (y+1)*sh/dh)
+		for x := 0; x < dw; x++ {
+			sx0, sx1 := x*sw/dw, max(x*sw/dw+1, (x+1)*sw/dw)
+			var r, g, b, n int
+			for yy := sy0; yy < sy1; yy++ {
+				o := yy*src.Stride + sx0*4
+				for xx := sx0; xx < sx1; xx++ {
+					r += int(src.Pix[o])
+					g += int(src.Pix[o+1])
+					b += int(src.Pix[o+2])
+					o += 4
+					n++
+				}
+			}
+			d := y*dst.Stride + x*4
+			dst.Pix[d], dst.Pix[d+1], dst.Pix[d+2], dst.Pix[d+3] = uint8(r/n), uint8(g/n), uint8(b/n), 255
+		}
+	}
+	return dst
+}
+
 // autoScale keeps big screens responsive over a tunnel.
 func autoScale(fullW int) float64 {
 	switch {
@@ -176,30 +209,127 @@ func autoScale(fullW int) float64 {
 
 // ---------- helper process ----------
 
+// msgConn is a message-oriented connection: a WebSocket, or the stdio pipe
+// a macOS helper uses to talk to its parent agent.
+type msgConn interface {
+	Read(ctx context.Context) (websocket.MessageType, []byte, error)
+	Write(ctx context.Context, typ websocket.MessageType, p []byte) error
+}
+
 // RunDesktopHelper is the entry point of "oceanic-agent desktop-helper <sid>".
+// With sid "--stdio" it speaks framed messages on stdin/stdout instead of
+// dialing the server (used on macOS, where the helper runs as the GUI user's
+// session and the parent daemon owns the network connection).
 func RunDesktopHelper(ctx context.Context, sid string) error {
-	cfg, err := LoadConfig()
-	if err != nil {
-		return err
+	var conn msgConn
+	closeConn := func() {}
+	if sid == "--stdio" {
+		// The parent closing our stdin means the session is over. Exit right
+		// away, even if a frame write to stdout is blocked mid-way.
+		conn = newStdioConn(exitOnEOF{os.Stdin}, os.Stdout)
+	} else {
+		cfg, err := LoadConfig()
+		if err != nil {
+			return err
+		}
+		ws, err := dialSession(ctx, newClient(cfg), sid)
+		if err != nil {
+			return err
+		}
+		defer ws.CloseNow()
+		ws.SetReadLimit(1 << 20)
+		conn = ws
+		closeConn = func() { ws.Close(websocket.StatusNormalClosure, "") }
 	}
-	c := newClient(cfg)
-	conn, err := dialSession(ctx, c, sid)
-	if err != nil {
-		return err
-	}
-	defer conn.CloseNow()
-	conn.SetReadLimit(1 << 20)
 
 	scr, err := openScreen()
 	if err != nil {
 		sendJSON(ctx, conn, protocol.TermControl{Type: "error", Message: "Can't access the screen: " + err.Error()})
-		conn.Close(websocket.StatusNormalClosure, "")
+		closeConn()
 		return err
 	}
 	defer scr.Close()
+	if n, ok := scr.(interface{ Notice() string }); ok && n.Notice() != "" {
+		sendJSON(ctx, conn, protocol.TermControl{Type: "info", Message: n.Notice()})
+	}
 	err = runDesktopSession(ctx, conn, scr)
-	conn.Close(websocket.StatusNormalClosure, "")
+	closeConn()
 	return err
+}
+
+type exitOnEOF struct{ r io.Reader }
+
+func (e exitOnEOF) Read(p []byte) (int, error) {
+	n, err := e.r.Read(p)
+	if err != nil {
+		os.Exit(0)
+	}
+	return n, err
+}
+
+// ---------- stdio framing: [type byte][u32 length][payload] ----------
+
+type stdioConn struct {
+	r  *bufio.Reader
+	mu sync.Mutex
+	w  *bufio.Writer
+}
+
+func newStdioConn(r io.Reader, w io.Writer) *stdioConn {
+	return &stdioConn{r: bufio.NewReaderSize(r, 64<<10), w: bufio.NewWriterSize(w, 256<<10)}
+}
+
+func (s *stdioConn) Read(ctx context.Context) (websocket.MessageType, []byte, error) {
+	var hdr [5]byte
+	if _, err := io.ReadFull(s.r, hdr[:]); err != nil {
+		return 0, nil, err
+	}
+	n := binary.BigEndian.Uint32(hdr[1:])
+	if n > 64<<20 {
+		return 0, nil, errors.New("stdio frame too large")
+	}
+	buf := make([]byte, n)
+	if _, err := io.ReadFull(s.r, buf); err != nil {
+		return 0, nil, err
+	}
+	return websocket.MessageType(hdr[0]), buf, nil
+}
+
+func (s *stdioConn) Write(ctx context.Context, typ websocket.MessageType, p []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var hdr [5]byte
+	hdr[0] = byte(typ)
+	binary.BigEndian.PutUint32(hdr[1:], uint32(len(p)))
+	if _, err := s.w.Write(hdr[:]); err != nil {
+		return err
+	}
+	if _, err := s.w.Write(p); err != nil {
+		return err
+	}
+	return s.w.Flush()
+}
+
+// bridgeStdio relays between the server WebSocket and a helper's stdio until
+// either side closes.
+func bridgeStdio(ctx context.Context, ws *websocket.Conn, helper *stdioConn) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		defer cancel()
+		for {
+			typ, data, err := ws.Read(ctx)
+			if err != nil || helper.Write(ctx, typ, data) != nil {
+				return
+			}
+		}
+	}()
+	for {
+		typ, data, err := helper.Read(ctx)
+		if err != nil || ws.Write(ctx, typ, data) != nil {
+			return
+		}
+	}
 }
 
 // dialSession opens the agent leg of a terminal/desktop session.
@@ -216,14 +346,14 @@ func dialSession(ctx context.Context, c *client, sid string) (*websocket.Conn, e
 	return conn, err
 }
 
-func sendJSON(ctx context.Context, conn *websocket.Conn, v any) error {
+func sendJSON(ctx context.Context, conn msgConn, v any) error {
 	b, _ := json.Marshal(v)
 	wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	return conn.Write(wctx, websocket.MessageText, b)
 }
 
-func runDesktopSession(parent context.Context, conn *websocket.Conn, scr desktopScreen) error {
+func runDesktopSession(parent context.Context, conn msgConn, scr desktopScreen) error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	ctx, cancel := context.WithCancel(parent)
@@ -417,7 +547,8 @@ var keyMap = map[string]keyDef{
 // the helper can't start, the error is reported straight to the viewer.
 func (a *Agent) runDesktop(ctx context.Context, j protocol.Job) {
 	log.Printf("desktop %s: starting helper", j.ID)
-	err := launchDesktopHelper(ctx, j.ID, sendSAS)
+	dial := func() (*websocket.Conn, error) { return dialSession(ctx, a.c, j.ID) }
+	err := launchDesktopHelper(ctx, j.ID, dial, sendSAS)
 	if err == nil {
 		log.Printf("desktop %s: closed", j.ID)
 		return
