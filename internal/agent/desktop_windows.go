@@ -36,6 +36,7 @@ var (
 	pGetIconInfo           = user32.NewProc("GetIconInfo")
 	pDrawIconEx            = user32.NewProc("DrawIconEx")
 	pSendInput             = user32.NewProc("SendInput")
+	pMapVirtualKey         = user32.NewProc("MapVirtualKeyW")
 	pSetProcessDPIAware    = user32.NewProc("SetProcessDPIAware")
 	pSetProcessDpiAwareCtx = user32.NewProc("SetProcessDpiAwarenessContext")
 	pCreateCompatibleDC    = gdi32.NewProc("CreateCompatibleDC")
@@ -309,6 +310,16 @@ func sendMouse(dx, dy int32, data, flags uint32) error {
 
 func sendKey(scan uint16, flags uint32) error {
 	in := keybdInputT{typ: inputKeyboard, scan: scan, flags: flags}
+	if flags&keyScancode != 0 {
+		// Fill in the virtual-key code too. Windows itself goes by the scan
+		// code, but some apps (and Wine) look at wVk, which is otherwise 0.
+		sc := uintptr(scan)
+		if flags&keyExtended != 0 {
+			sc |= 0xE000
+		}
+		vk, _, _ := pMapVirtualKey.Call(sc, 3) // MAPVK_VSC_TO_VK_EX
+		in.vk = uint16(vk)
+	}
 	if r, _, err := pSendInput.Call(1, uintptr(unsafe.Pointer(&in)), unsafe.Sizeof(in)); r == 0 {
 		return fmt.Errorf("SendInput: %v", err)
 	}
